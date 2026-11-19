@@ -1,11 +1,11 @@
-"""Línea de comandos:  uv run job-agent buscar  |  uv run job-agent evaluar --limite 3"""
+"""Línea de comandos:  uv run job-agent buscar | evaluar --limite 3 | agente "pedido" """
 
 import argparse
 import asyncio
 import json
 import time
 
-from job_agent import config
+from job_agent import agente, config, evals
 from job_agent.evaluador import cargar_evaluadas, evaluar, guardar_evaluadas
 from job_agent.filtros import filtrar
 from job_agent.models import Candidata
@@ -73,11 +73,29 @@ def main() -> None:
     p_eval.add_argument("--limite", type=int, default=3)
     p_eval.add_argument("--reevaluar", action="store_true", help="Ignora las ya evaluadas")
 
+    p_agente = sub.add_parser("agente", help="El agente decide qué buscar y evaluar")
+    p_agente.add_argument("pedido", nargs="?", default="Buscame trabajos remotos de AI Engineer o full stack con IA.")
+    p_agente.add_argument("--objetivo", type=int, default=5, help="Ofertas 'aplicar' a encontrar")
+    p_agente.add_argument("--max-evaluaciones", type=int, default=8, help="Presupuesto de evaluaciones nuevas")
+
+    p_evals = sub.add_parser("evals", help="Mide el evaluador contra tus etiquetas")
+    sub_evals = p_evals.add_subparsers(dest="accion", required=True)
+    p_prep = sub_evals.add_parser("preparar", help="Arma el CSV para etiquetar")
+    p_prep.add_argument("--n", type=int, default=25)
+    p_corr = sub_evals.add_parser("correr", help="Evalúa y calcula métricas")
+    p_corr.add_argument("--repeticiones", type=int, default=2)
+
     args = parser.parse_args()
     if args.comando == "buscar":
         asyncio.run(cmd_buscar(args.paginas))
-    else:
+    elif args.comando == "evaluar":
         asyncio.run(cmd_evaluar(args.limite, args.reevaluar))
+    elif args.comando == "agente":
+        asyncio.run(agente.correr(args.pedido, args.objetivo, args.max_evaluaciones))
+    elif args.accion == "preparar":
+        evals.preparar(args.n)
+    else:
+        asyncio.run(evals.correr(args.repeticiones))
 
 
 if __name__ == "__main__":
