@@ -100,3 +100,27 @@ def test_opciones_solo_nuestras_herramientas(sesion):
     assert o.tools == []
     assert set(o.allowed_tools) == set(nombres_herramientas(hs))
     assert all(n.startswith("mcp__jobs__") for n in o.allowed_tools)
+
+
+def test_semantico_sin_indice_degrada_con_error(sesion):
+    def explota():
+        raise ConnectionError("sin docker")
+
+    sesion.indice = explota
+    r = correr(herramienta(sesion, "buscar_semantico")({"consulta": "agentes", "k": 5}))
+    assert r.get("is_error") and "buscar_ofertas" in texto(r)
+
+
+def test_semantico_registra_ids_compartidos(sesion, monkeypatch):
+    from job_agent import vectores
+    from job_agent.filtros import a_candidata_desde_job
+    from tests.test_filtros import CRITERIOS
+
+    c = a_candidata_desde_job(job(applicationLink="https://x/a"), CRITERIOS)
+    res = vectores.Resultado(link=c.link, titulo=c.titulo, empresa=c.empresa, similitud=0.9,
+                             pasa_filtros=True, motivo=None, candidata=c)
+    monkeypatch.setattr(vectores, "buscar", lambda conn, emb, q, k: [res])
+    sesion.indice = lambda: (None, None)
+    correr(herramienta(sesion, "buscar_ofertas")({"consulta": "ai", "paginas": 1}))  # registra o1
+    r = texto(correr(herramienta(sesion, "buscar_semantico")({"consulta": "agentes", "k": 5})))
+    assert "o1 | sim 0.90" in r  # misma oferta, mismo id

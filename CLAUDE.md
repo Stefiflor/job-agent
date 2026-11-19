@@ -8,12 +8,15 @@ Agente que busca ofertas remotas (Himalayas API) y las evalúa contra un CV con 
 - `uv run job-agent evaluar --limite 3` — evalúa con Claude → `private/evaluadas.json` (saltea las ya evaluadas)
 - `uv run job-agent agente "pedido" --objetivo 5 --max-evaluaciones 8` — agente con herramientas
 - `uv run job-agent evals preparar --n 25` / `evals correr --repeticiones 2` — evals contra etiquetas humanas
-- `uv run pytest` — tests
+- `docker compose up -d` — Postgres + pgvector en localhost:5433
+- `uv run job-agent rag indexar --feed 10` / `rag buscar "..."` / `rag similares <link>` — índice semántico
+- `uv run pytest` — tests (los de pgvector necesitan `DATABASE_URL_TEST`)
 
 ## Estructura
 - `src/job_agent/filtros.py` — filtros determinísticos, funciones puras. Todo filtro nuevo lleva test.
 - `src/job_agent/sources/` — un módulo por fuente de ofertas.
 - `src/job_agent/evaluador.py` — prompt, schema y llamada al SDK.
+- `src/job_agent/vectores.py`, `embeddings.py` — pgvector + model2vec (Embedder es un Protocol).
 - `src/job_agent/agente.py` — agente: herramientas MCP en proceso, presupuesto, hook de logs.
 - `src/job_agent/models.py` — modelos pydantic; `Evaluacion` define el JSON Schema de la salida.
 - `private/` — CV, criterios y resultados. Ignorado por git. Nunca commitear nada de ahí.

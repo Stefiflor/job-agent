@@ -54,6 +54,15 @@ class Sesion:
     costo_usd: float = 0.0
     ruta_evaluadas: Path = config.EVALUADAS
     ruta_tracker: Path = config.PRIVADO / "tracker.json"
+    _indice: Any = None  # (conexión, embedder), se abre la primera vez que se usa
+
+    def indice(self):
+        if self._indice is None:
+            from job_agent import vectores
+            from job_agent.embeddings import Model2VecEmbedder
+
+            self._indice = (vectores.conectar(), Model2VecEmbedder())
+        return self._indice
 
     def registrar(self, c: Candidata) -> str:
         """IDs cortos (o1, o2...) para que el modelo no tenga que repetir URLs largas."""
@@ -186,7 +195,35 @@ def crear_herramientas(s: Sesion) -> list:
         s.ruta_tracker.write_text(json.dumps(tracker, ensure_ascii=False, indent=2), encoding="utf-8")
         return _texto(f"Guardada en el tracker ({len(tracker)} en total).")
 
-    return [buscar_ofertas, ver_oferta, evaluar_oferta, guardar_en_tracker]
+    @tool(
+        "buscar_semantico",
+        "Búsqueda por significado en el índice local de ofertas (pgvector), en lenguaje natural. "
+        "Encuentra ofertas que una búsqueda por palabra clave no ve (ej. 'construir agentes que "
+        "llamen APIs para atención al cliente'). Solo devuelve ofertas que pasan los filtros.",
+        {
+            "consulta": Annotated[str, "Descripción en lenguaje natural del trabajo buscado"],
+            "k": Annotated[int, "Cantidad de resultados, 1 a 20"],
+        },
+    )
+    async def buscar_semantico(args: dict) -> dict:
+        from job_agent import vectores
+
+        try:
+            conn, emb = s.indice()
+            resultados = vectores.buscar(conn, emb, args["consulta"], max(1, min(int(args.get("k", 10)), 20)))
+        except Exception as e:  # sin Docker o sin índice: el agente sigue con buscar_ofertas
+            return _texto(f"Índice semántico no disponible ({type(e).__name__}). Usá buscar_ofertas.", error=True)
+        lineas = []
+        for r in resultados:
+            if r.candidata is None:
+                continue
+            oid = s.registrar(r.candidata)
+            previa = s.evaluacion_previa(r.candidata)
+            ya = f" | YA EVALUADA: {previa.evaluacion.veredicto} {previa.evaluacion.encaje}" if previa else ""
+            lineas.append(f"{oid} | sim {r.similitud:.2f} | {r.titulo} | {r.empresa} | {_salario(r.candidata)}{ya}")
+        return _texto(f"{len(lineas)} resultados por similitud:\n" + "\n".join(lineas))
+
+    return [buscar_ofertas, buscar_semantico, ver_oferta, evaluar_oferta, guardar_en_tracker]
 
 
 # --- Agente ------------------------------------------------------------------
@@ -207,6 +244,7 @@ class Informe(BaseModel):
 SYSTEM_PROMPT = """Sos un agente que busca trabajo remoto para una candidata. Tenés herramientas para buscar ofertas, leerlas, evaluarlas y guardarlas en su tracker.
 
 Estrategia:
+- Combiná buscar_ofertas (palabra clave, datos frescos de la API) con buscar_semantico (por significado, sobre el índice local). Si el índice no está disponible, seguí solo con palabra clave.
 - Buscá con varias consultas distintas (sinónimos, roles cercanos). Las ofertas repetidas reciben el mismo id.
 - Antes de evaluar, descartá por título o con ver_oferta lo que claramente no encaja (ventas, management, research de ML puro, idiomas que no habla). evaluar_oferta es cara y tiene presupuesto.
 - Las marcadas "YA EVALUADA" no gastan presupuesto: tenelas en cuenta.

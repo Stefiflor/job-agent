@@ -7,6 +7,7 @@ import httpx
 from job_agent.models import Job
 
 URL_BUSQUEDA = "https://himalayas.app/jobs/api/search"
+URL_FEED = "https://himalayas.app/jobs/api"  # feed general, paginado con cursor
 POR_PAGINA = 20
 PAUSA_SEG = 1.0  # cortesía con la API
 
@@ -33,3 +34,23 @@ async def buscar_roles(roles: list[str], paginas: int = 2) -> list[Job]:
             for job in await buscar(client, rol, paginas):
                 vistas[job.guid] = job
     return list(vistas.values())
+
+
+async def feed(paginas: int, por_pagina: int = 20) -> list[Job]:
+    """Recorre el feed general (todas las ofertas, más nuevas primero) con paginación por cursor."""
+    jobs: list[Job] = []
+    cursor = None
+    async with httpx.AsyncClient(timeout=30) as client:
+        for pagina in range(1, paginas + 1):
+            params = {"limit": por_pagina} | ({"cursor": cursor} if cursor else {})
+            resp = await client.get(URL_FEED, params=params)
+            resp.raise_for_status()
+            data = resp.json()
+            lote = [Job.model_validate(j) for j in data.get("jobs", [])]
+            jobs.extend(lote)
+            print(f"  feed página {pagina}: {len(lote)}")
+            cursor = data.get("nextCursor")
+            if not cursor or not lote:
+                break
+            await asyncio.sleep(PAUSA_SEG)
+    return jobs

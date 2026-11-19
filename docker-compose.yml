@@ -1,0 +1,18 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: jobagent
+      POSTGRES_PASSWORD: jobagent  # solo local; no exponer este puerto a internet
+      POSTGRES_DB: jobagent
+    ports:
+      - "127.0.0.1:5433:5432"  # 5433 para no chocar con un Postgres local
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jobagent"]
+      interval: 5s
+      retries: 10
+
+volumes:
+  pgdata:

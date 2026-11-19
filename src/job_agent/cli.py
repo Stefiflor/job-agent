@@ -6,6 +6,7 @@ import json
 import time
 
 from job_agent import agente, config, evals
+from job_agent.sources import himalayas
 from job_agent.evaluador import cargar_evaluadas, evaluar, guardar_evaluadas
 from job_agent.filtros import filtrar
 from job_agent.models import Candidata
@@ -62,6 +63,46 @@ async def cmd_evaluar(limite: int, reevaluar: bool) -> None:
     print(f"Costo estimado de esta corrida: ${costo_total:.3f} (con login de Claude sale del cupo Pro; con API key se cobra)")
 
 
+async def cmd_rag_indexar(feed: int, recrear: bool) -> None:
+    from job_agent import vectores
+    from job_agent.embeddings import Model2VecEmbedder
+
+    criterios = config.cargar_criterios()
+    print("Buscando por roles...")
+    jobs = await buscar_roles(criterios.roles, 2)
+    if feed:
+        print(f"Recorriendo el feed general ({feed} páginas)...")
+        jobs += await himalayas.feed(feed)
+    emb = Model2VecEmbedder()
+    print(f"Calculando embeddings con {emb.nombre}...")
+    with vectores.conectar() as conn:
+        vectores.crear_esquema(conn, emb.dim, recrear)
+        stats = vectores.indexar(conn, jobs, emb, criterios, ahora=time.time())
+        total, pasan = vectores.contar(conn)
+    print(f"Esta corrida: {stats}. En el índice: {total} ofertas, {pasan} pasan tus filtros.")
+
+
+def _imprimir_resultados(resultados) -> None:
+    for r in resultados:
+        extra = "" if r.pasa_filtros else f"  [no pasa filtros: {r.motivo}]"
+        print(f"{r.similitud:.2f} | {r.titulo} | {r.empresa}{extra}\n      {r.link}")
+
+
+def cmd_rag_buscar(consulta: str, k: int, todas: bool) -> None:
+    from job_agent import vectores
+    from job_agent.embeddings import Model2VecEmbedder
+
+    with vectores.conectar() as conn:
+        _imprimir_resultados(vectores.buscar(conn, Model2VecEmbedder(), consulta, k, solo_filtradas=not todas))
+
+
+def cmd_rag_similares(link: str, k: int, todas: bool) -> None:
+    from job_agent import vectores
+
+    with vectores.conectar() as conn:
+        _imprimir_resultados(vectores.similares(conn, link, k, solo_filtradas=not todas))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="job-agent")
     sub = parser.add_subparsers(dest="comando", required=True)
@@ -85,6 +126,20 @@ def main() -> None:
     p_corr = sub_evals.add_parser("correr", help="Evalúa y calcula métricas")
     p_corr.add_argument("--repeticiones", type=int, default=2)
 
+    p_rag = sub.add_parser("rag", help="Índice semántico de ofertas (pgvector)")
+    sub_rag = p_rag.add_subparsers(dest="accion_rag", required=True)
+    p_idx = sub_rag.add_parser("indexar", help="Busca ofertas y las indexa")
+    p_idx.add_argument("--feed", type=int, default=10, help="Páginas de 20 del feed general (la API no da más por página)")
+    p_idx.add_argument("--recrear", action="store_true", help="Borra el índice (si cambiaste de modelo)")
+    p_bus = sub_rag.add_parser("buscar", help="Búsqueda semántica en lenguaje natural")
+    p_bus.add_argument("consulta")
+    p_bus.add_argument("--k", type=int, default=10)
+    p_bus.add_argument("--todas", action="store_true", help="Incluye las que no pasan tus filtros")
+    p_sim = sub_rag.add_parser("similares", help="Ofertas parecidas a una (por link)")
+    p_sim.add_argument("link")
+    p_sim.add_argument("--k", type=int, default=10)
+    p_sim.add_argument("--todas", action="store_true")
+
     args = parser.parse_args()
     if args.comando == "buscar":
         asyncio.run(cmd_buscar(args.paginas))
@@ -92,6 +147,13 @@ def main() -> None:
         asyncio.run(cmd_evaluar(args.limite, args.reevaluar))
     elif args.comando == "agente":
         asyncio.run(agente.correr(args.pedido, args.objetivo, args.max_evaluaciones))
+    elif args.comando == "rag":
+        if args.accion_rag == "indexar":
+            asyncio.run(cmd_rag_indexar(args.feed, args.recrear))
+        elif args.accion_rag == "buscar":
+            cmd_rag_buscar(args.consulta, args.k, args.todas)
+        else:
+            cmd_rag_similares(args.link, args.k, args.todas)
     elif args.accion == "preparar":
         evals.preparar(args.n)
     else:

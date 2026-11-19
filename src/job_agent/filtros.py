@@ -82,6 +82,28 @@ def a_candidata(job: Job, paises: list[str], salario: RangoSalario | None, texto
     )
 
 
+def motivo_descarte(job: Job, criterios: Criterios, ahora: float) -> str | None:
+    """Primer filtro que la oferta no pasa, o None si pasa todos."""
+    if job.expiry_date and job.expiry_date < ahora:
+        return "vencida"
+    if not zona_ok(job, criterios):
+        return "zona_horaria"
+    if paises_validos(job, criterios) is None:
+        return "pais"
+    if seniority_excluida(job, criterios):
+        return "seniority"
+    salario = salario_usd_mes(job)
+    if salario and salario.max < criterios.salario_minimo_usd_mes:
+        return "salario_bajo"
+    if len(limpiar_html(job.description)) < MIN_CHARS_DESC:
+        return "desc_vacia"
+    return None
+
+
+def a_candidata_desde_job(job: Job, criterios: Criterios) -> Candidata:
+    return a_candidata(job, paises_validos(job, criterios) or [], salario_usd_mes(job), limpiar_html(job.description))
+
+
 def filtrar(
     jobs: list[Job], criterios: Criterios, ahora: float
 ) -> tuple[list[Candidata], dict[str, int]]:
@@ -90,30 +112,12 @@ def filtrar(
         ["vencida", "zona_horaria", "pais", "seniority", "salario_bajo", "desc_vacia"], 0
     )
     candidatas: list[Candidata] = []
-
     for job in jobs:
-        if job.expiry_date and job.expiry_date < ahora:
-            descartes["vencida"] += 1
-            continue
-        if not zona_ok(job, criterios):
-            descartes["zona_horaria"] += 1
-            continue
-        paises = paises_validos(job, criterios)
-        if paises is None:
-            descartes["pais"] += 1
-            continue
-        if seniority_excluida(job, criterios):
-            descartes["seniority"] += 1
-            continue
-        salario = salario_usd_mes(job)
-        if salario and salario.max < criterios.salario_minimo_usd_mes:
-            descartes["salario_bajo"] += 1
-            continue
-        texto = limpiar_html(job.description)
-        if len(texto) < MIN_CHARS_DESC:
-            descartes["desc_vacia"] += 1
-            continue
-        candidatas.append(a_candidata(job, paises, salario, texto))
+        motivo = motivo_descarte(job, criterios, ahora)
+        if motivo:
+            descartes[motivo] += 1
+        else:
+            candidatas.append(a_candidata_desde_job(job, criterios))
 
     # Salario más alto primero; las sin dato al final.
     candidatas.sort(key=lambda c: c.salario_usd_mes.max if c.salario_usd_mes else -1, reverse=True)

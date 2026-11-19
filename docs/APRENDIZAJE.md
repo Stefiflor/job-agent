@@ -160,3 +160,43 @@ pedido + objetivo + presupuesto
 - **¿Cómo evaluás un sistema con LLM?** Con un golden set etiquetado por una persona, métricas definidas antes de mirar los resultados, repeticiones para medir varianza, y foco en los errores caros, no solo en el acierto promedio.
 - **¿Qué hacés si el acuerdo es bajo?** Miro la matriz de confusión y los casos fallidos, ajusto el prompt o el schema y vuelvo a correr las evals sobre el mismo set. Nunca ajusto mirando los mismos casos con los que después reporto: para eso se separa un set de validación.
 - **¿Por qué no usar otro LLM como juez?** Para un veredicto subjetivo ("¿me conviene?") la referencia tiene que ser la persona. LLM-as-judge sirve para criterios objetivos, como evaluar la calidad de la carta de presentación (Fase 5).
+
+---
+
+## Fase 4 — Índice vectorial y búsqueda semántica (`vectores.py`, `embeddings.py`)
+
+**Qué agrega:** las ofertas (del feed general de Himalayas, 20 por página, más las búsquedas por rol) se guardan en Postgres con un **embedding**: un vector que representa el significado del texto. Así se puede buscar por significado ("agentes que llamen APIs para atención al cliente") y encontrar ofertas que no dicen "LLM engineer" en el título.
+
+```
+Himalayas (roles + feed) → filtros → texto (título + empresa + descripción)
+                                        │
+                                  model2vec (local)
+                                        ▼
+                     Postgres + pgvector: tabla `ofertas` (vector + índice HNSW)
+                                        │
+       rag buscar "..."  ·  rag similares <link>  ·  herramienta del agente buscar_semantico
+```
+
+**¿Esto es RAG?** Es la mitad *retrieval*. En RAG completo, lo recuperado alimenta una generación. Acá lo usa el agente para decidir qué evaluar, que es *agentic retrieval*. La generación con contexto recuperado llega en la Fase 5, con la carta de presentación. En una entrevista conviene decirlo con precisión: es mejor que vender una búsqueda vectorial como si fuera RAG.
+
+**Decisiones y trade-offs**
+
+| Decisión | Por qué | Alternativa descartada |
+|---|---|---|
+| pgvector en Postgres | Un solo sistema para datos y vectores, SQL normal y transacciones. Para miles o cientos de miles de vectores alcanza de sobra. | Base vectorial dedicada (Pinecone, Qdrant, Weaviate): un servicio más que operar, y no hace falta a esta escala. |
+| model2vec (`potion-base-8M`) | Embeddings estáticos: corre en CPU en milisegundos, sin PyTorch (que no publica versiones para Mac Intel), y es gratis. | `sentence-transformers` (mejor calidad, pero pesado y sin wheels para Intel) o una API (Voyage, OpenAI): mejor calidad, pero se paga y es una dependencia externa. |
+| `Embedder` como Protocol | Cambiar de modelo es una clase nueva, no un refactor. Los tests usan un embedder falso que no descarga nada. | Llamar a model2vec directo en todos lados. |
+| Vectores normalizados + `vector_cosine_ops` | La similitud coseno es la estándar para texto. Normalizar hace que coseno y producto punto coincidan. | Distancia euclídea. |
+| Índice HNSW | Búsqueda aproximada rápida, sin tener que reentrenar el índice al agregar datos. | IVFFlat: necesita datos previos para entrenar las listas. |
+| Guardar también las ofertas que **no** pasan los filtros, con el motivo | Sirve para analizar el mercado ("¿cuántas piden residencia fija?"); `--todas` las muestra. | Indexar solo las filtradas. |
+| Control de dimensión al crear el esquema | Si se cambia de modelo, los vectores viejos no son comparables: avisa y pide `--recrear` en vez de fallar raro. | No validar. |
+| Herramienta del agente que falla con elegancia | Si Docker está apagado, devuelve `is_error` y el agente sigue con la búsqueda por palabra clave. | Que el agente se caiga. |
+| Puerto 5433 y solo `127.0.0.1` | No choca con otro Postgres y no queda expuesto en la red. | 5432 en todas las interfaces. |
+
+**Tests:** los de `test_vectores.py` corren contra un **Postgres real con pgvector** (no un mock), con un embedder falso de bolsa de palabras. Se saltean si no está `DATABASE_URL_TEST`.
+
+**Preguntas de entrevista**
+- **¿Cuándo usás búsqueda semántica y cuándo por palabra clave?** Palabra clave para términos exactos (un framework, un título); semántica para intención y sinónimos. Lo mejor suele ser combinarlas (búsqueda híbrida), que es lo que hace el agente con sus dos herramientas.
+- **¿Por qué pgvector y no Pinecone?** Por escala y operación: a esta escala, Postgres alcanza y evita sumar otro servicio. Cambiaría si hubiera decenas de millones de vectores o necesitara filtros y latencias que Postgres no da.
+- **¿Qué pasa si cambiás el modelo de embeddings?** Hay que reindexar todo, porque los vectores de modelos distintos no son comparables. Por eso se guarda el nombre del modelo en cada fila y se valida la dimensión.
+- **¿Cómo medirías la calidad del retrieval?** Con un set de consultas y las ofertas que deberían aparecer, midiendo recall@k. Es una extensión natural de las evals de la Fase 3.
