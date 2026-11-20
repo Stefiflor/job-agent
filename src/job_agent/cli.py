@@ -103,6 +103,39 @@ def cmd_rag_similares(link: str, k: int, todas: bool) -> None:
         _imprimir_resultados(vectores.similares(conn, link, k, solo_filtradas=not todas))
 
 
+def _buscar_candidata(link: str) -> Candidata | None:
+    for ruta, clave in ((config.EVALUADAS, "candidata"), (config.CANDIDATAS, None)):
+        if ruta.exists():
+            for x in json.loads(ruta.read_text(encoding="utf-8")):
+                c = x[clave] if clave else x
+                if c["link"].split("?")[0] == link.split("?")[0]:
+                    return Candidata.model_validate(c)
+    return None
+
+
+async def cmd_carta(link: str, idioma: str) -> None:
+    from job_agent import carta
+    from job_agent.embeddings import Model2VecEmbedder
+
+    c = _buscar_candidata(link)
+    if c is None:
+        raise SystemExit("No encontré esa oferta en candidatas ni evaluadas. Corré `buscar` primero.")
+    if not carta.EXPERIENCIA.exists():
+        raise SystemExit(f"Falta {carta.EXPERIENCIA.relative_to(config.RAIZ)}: es la única fuente de la carta.")
+    fragmentos = carta.fragmentar(carta.EXPERIENCIA.read_text(encoding="utf-8"))
+    print(f"{c.titulo} | {c.empresa} · {len(fragmentos)} fragmentos de experiencia")
+    r = await carta.generar(c, fragmentos, Model2VecEmbedder(), idioma)
+    ruta = carta.guardar(c, r)
+    if r.borrador:
+        print("\n" + r.borrador.carta + "\n")
+    ok = r.verificacion and r.verificacion.respaldada
+    print(f"{'✓ verificada' if ok else '⚠ con problemas: revisala antes de enviar'} · intentos: {r.intentos} · costo ${r.costo_usd:.3f}")
+    if not ok and r.verificacion:
+        for p in r.verificacion.problemas:
+            print(f"  - {p.afirmacion}: {p.motivo}")
+    print(f"→ {ruta}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="job-agent")
     sub = parser.add_subparsers(dest="comando", required=True)
@@ -140,6 +173,10 @@ def main() -> None:
     p_sim.add_argument("--k", type=int, default=10)
     p_sim.add_argument("--todas", action="store_true")
 
+    p_carta = sub.add_parser("carta", help="Carta de presentación con RAG y verificación")
+    p_carta.add_argument("link", help="Link de la oferta (de evaluadas o candidatas)")
+    p_carta.add_argument("--idioma", default="English", help="English o Spanish")
+
     args = parser.parse_args()
     if args.comando == "buscar":
         asyncio.run(cmd_buscar(args.paginas))
@@ -147,6 +184,8 @@ def main() -> None:
         asyncio.run(cmd_evaluar(args.limite, args.reevaluar))
     elif args.comando == "agente":
         asyncio.run(agente.correr(args.pedido, args.objetivo, args.max_evaluaciones))
+    elif args.comando == "carta":
+        asyncio.run(cmd_carta(args.link, args.idioma))
     elif args.comando == "rag":
         if args.accion_rag == "indexar":
             asyncio.run(cmd_rag_indexar(args.feed, args.recrear))

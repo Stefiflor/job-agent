@@ -200,3 +200,46 @@ Himalayas (roles + feed) → filtros → texto (título + empresa + descripción
 - **¿Por qué pgvector y no Pinecone?** Por escala y operación: a esta escala, Postgres alcanza y evita sumar otro servicio. Cambiaría si hubiera decenas de millones de vectores o necesitara filtros y latencias que Postgres no da.
 - **¿Qué pasa si cambiás el modelo de embeddings?** Hay que reindexar todo, porque los vectores de modelos distintos no son comparables. Por eso se guarda el nombre del modelo en cada fila y se valida la dimensión.
 - **¿Cómo medirías la calidad del retrieval?** Con un set de consultas y las ofertas que deberían aparecer, midiendo recall@k. Es una extensión natural de las evals de la Fase 3.
+
+---
+
+## Fase 5 — Carta de presentación con RAG y verificación (`carta.py`)
+
+**Ahora sí es RAG completo:** lo recuperado (fragmentos de tu experiencia) alimenta la generación (la carta). Y se agrega un paso que casi nadie muestra: **verificar que la carta no invente**.
+
+```
+private/experiencia.md → fragmentos (1 por bullet: E1, E2, ...)
+                               │ embeddings (mismo Embedder)
+oferta ──────────────► top-10 fragmentos más parecidos
+                               │
+                      REDACTOR (LLM): carta + lista de afirmaciones con sus fuentes [E3, E7]
+                               │
+              chequeo en código: ¿cita fragmentos que existen?  ──no──┐
+                               │ sí                                    │
+                      VERIFICADOR (otro LLM): ¿cada afirmación está    │
+                      respaldada por sus fragmentos? ¿exagera?         │
+                               │                                       │
+                 respaldada ── sí → private/cartas/empresa--puesto.md  │
+                               │ no                                    │
+                     feedback con los problemas ◄──────────────────────┘
+                     → reescribir (máximo 2 intentos)
+```
+
+**Decisiones y trade-offs**
+
+| Decisión | Por qué | Alternativa descartada |
+|---|---|---|
+| Base de experiencia escrita por la candidata, un hecho por bullet | El modelo solo puede afirmar lo que está escrito. La calidad de la carta depende de esta fuente, no del prompt. | Generar desde el CV solo: cartas genéricas. |
+| Retrieval **en memoria** (numpy), no en pgvector | Son ~30 fragmentos: calcular 30 similitudes es instantáneo. Llevarlos a la base sería complejidad sin beneficio. | pgvector: correcto para miles de ofertas, exagerado para 30 fragmentos. |
+| La carta trae sus afirmaciones con fuentes | Hace que la verificación sea concreta y auditable: se ve de qué fragmento sale cada frase. | Texto libre: imposible de verificar sistemáticamente. |
+| Chequeo determinístico antes del verificador | Si cita un fragmento inexistente, se rechaza sin gastar una llamada. Lo barato y seguro primero, igual que con los filtros. | Mandar todo al verificador. |
+| Verificador que lee la carta completa | El redactor podría afirmar algo y no listarlo. | Revisar solo la lista de afirmaciones. |
+| Máximo 2 intentos y marca "CON PROBLEMAS" | Un loop sin límite gasta sin garantía de converger. Si falla, la persona revisa. | Reintentar hasta que pase. |
+| Se guardan los fragmentos recuperados junto a la carta | Para depurar: si la carta es mala, ¿fue el retrieval o la generación? | Guardar solo la carta. |
+
+**Relación con la experiencia en Quantic Core:** es el mismo patrón que el verificador anti-alucinación del agente de turnos (un segundo modelo contrasta lo que dice el primero contra una fuente de verdad). Allá la fuente de verdad era el log de herramientas; acá, los fragmentos de experiencia. Es una muy buena historia para contar: aplicaste el mismo patrón en dos dominios.
+
+**Preguntas de entrevista**
+- **¿Cómo evitás alucinaciones en RAG?** Restringiendo la generación al contexto recuperado, pidiendo citas por afirmación, validando las citas en código y usando un verificador independiente con un límite de reintentos.
+- **¿Por qué un segundo modelo y no el mismo?** Con un prompt distinto y sin el objetivo de "escribir algo convincente", el verificador tiene incentivos distintos. Igual no es infalible: por eso además se guardan las fuentes para que una persona revise.
+- **¿Qué medirías?** El porcentaje de cartas verificadas al primer intento, los problemas más comunes y, a mano, una muestra de cartas para estimar falsos negativos del verificador (cosas inventadas que dejó pasar).
