@@ -14,5 +14,20 @@ services:
       interval: 5s
       retries: 10
 
+  # Opcional: API + UI en contenedor. Necesita ANTHROPIC_API_KEY (se cobra por uso).
+  #   ANTHROPIC_API_KEY=... docker compose --profile app up --build
+  app:
+    profiles: ["app"]
+    build: .
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}  # vacío = el agente falla al autenticar
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./private:/app/private
+    depends_on:
+      db:
+        condition: service_healthy
+
 volumes:
   pgdata:

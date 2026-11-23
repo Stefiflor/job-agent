@@ -173,6 +173,10 @@ def main() -> None:
     p_sim.add_argument("--k", type=int, default=10)
     p_sim.add_argument("--todas", action="store_true")
 
+    p_api = sub.add_parser("api", help="Levanta la API + la UI en http://127.0.0.1:8000")
+    p_api.add_argument("--port", type=int, default=8000)
+    p_api.add_argument("--reload", action="store_true", help="Recarga al cambiar el código (desarrollo)")
+
     p_carta = sub.add_parser("carta", help="Carta de presentación con RAG y verificación")
     p_carta.add_argument("link", help="Link de la oferta (de evaluadas o candidatas)")
     p_carta.add_argument("--idioma", default="English", help="English o Spanish")
@@ -184,6 +188,11 @@ def main() -> None:
         asyncio.run(cmd_evaluar(args.limite, args.reevaluar))
     elif args.comando == "agente":
         asyncio.run(agente.correr(args.pedido, args.objetivo, args.max_evaluaciones))
+    elif args.comando == "api":
+        import uvicorn
+
+        # 127.0.0.1: solo accesible desde tu máquina (la API no tiene auth y gasta cupo).
+        uvicorn.run("job_agent.api:app", host="127.0.0.1", port=args.port, reload=args.reload)
     elif args.comando == "carta":
         asyncio.run(cmd_carta(args.link, args.idioma))
     elif args.comando == "rag":

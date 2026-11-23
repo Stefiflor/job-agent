@@ -243,3 +243,78 @@ oferta ──────────────► top-10 fragmentos más pare
 - **¿Cómo evitás alucinaciones en RAG?** Restringiendo la generación al contexto recuperado, pidiendo citas por afirmación, validando las citas en código y usando un verificador independiente con un límite de reintentos.
 - **¿Por qué un segundo modelo y no el mismo?** Con un prompt distinto y sin el objetivo de "escribir algo convincente", el verificador tiene incentivos distintos. Igual no es infalible: por eso además se guardan las fuentes para que una persona revise.
 - **¿Qué medirías?** El porcentaje de cartas verificadas al primer intento, los problemas más comunes y, a mano, una muestra de cartas para estimar falsos negativos del verificador (cosas inventadas que dejó pasar).
+
+### Ajuste: base de experiencia chica = sin retrieval
+
+La primera carta real (Appsilon) salió verificada, pero **dejó afuera lo más fuerte**: el verificador anti-alucinación y las herramientas del agente de turnos. El retrieval elegía 10 de 28 fragmentos por similitud con la oferta, y las líneas del proyecto personal compartían más palabras con el aviso ("agent", "tools", "SDK").
+
+Arreglo: si la base tiene 60 fragmentos o menos, se pasan **todos**, y el prompt pide priorizar el trabajo en producción por sobre los proyectos personales.
+
+*Lección para entrevistas:* RAG no siempre mejora. Si todo el contexto entra en la ventana del modelo, filtrar puede empeorar el resultado. El retrieval es para cuando no entra o cuando es caro. Esta decisión se tomó mirando una salida real, no por intuición.
+
+---
+
+## Fase 6 — API (`api.py`, FastAPI)
+
+**Qué es:** la misma lógica de la CLI, expuesta por HTTP para la UI. `uv run job-agent api` → http://127.0.0.1:8000, con documentación automática en `/docs`.
+
+| Endpoint | Qué hace |
+|---|---|
+| `GET /api/resumen` | Totales por veredicto, costo acumulado, tracker por estado |
+| `GET /api/ofertas` · `GET /api/ofertas/{id}` | Ofertas evaluadas (filtros) y detalle con evaluación y carta guardada |
+| `POST /api/buscar` | Busca en Himalayas y filtra |
+| `GET /api/evaluar/stream` · `GET /api/agente/stream` | **Server-Sent Events**: progreso en vivo de la evaluación y de cada herramienta que usa el agente |
+| `POST /api/ofertas/{id}/carta` | Carta con RAG y verificación |
+| `GET/POST/PATCH /api/tracker` | Postulaciones y sus estados |
+| `GET /api/rag/buscar` | Búsqueda semántica (503 si Docker está apagado) |
+| `GET /api/evals` | Métricas del último eval |
+
+**Decisiones y trade-offs**
+
+| Decisión | Por qué | Alternativa descartada |
+|---|---|---|
+| SSE para el agente y la evaluación | Son tareas de 30 s a varios minutos. SSE es HTTP normal, unidireccional y el navegador lo soporta nativo (`EventSource`). | WebSockets: bidireccional, más complejo y no hace falta. Polling: más requests y más latencia. |
+| El agente emite **eventos** (`agente.eventos`) y la CLI y la API los consumen | Una sola implementación, dos interfaces. Refactor hecho para la Fase 6. | Duplicar el loop en la API. |
+| Ids estables = hash del link sin query string | El mismo aviso con distinto `utm_source` es la misma oferta. | Índices de array: cambian al reordenar. |
+| Escritura atómica (archivo temporal + `replace`) y `asyncio.Lock` | Nunca queda un JSON a medio escribir si el proceso se corta, y la UI puede disparar dos cambios a la vez. | Escribir directo. |
+| JSON en disco y no una base para ofertas y tracker | Un solo usuario y cientos de registros. Postgres ya está, pero migrar es un cambio acotado cuando haga falta. | Meter todo en Postgres ahora. |
+| `127.0.0.1` y **sin autenticación** | Es una herramienta personal: cada request con LLM gasta cupo o dinero. Exponerla sin auth sería un agujero. | Escuchar en 0.0.0.0. |
+| La API sirve la UI compilada | Un solo proceso y un solo puerto. | Dos servidores en producción. |
+
+**Docker (`Dockerfile`, perfil `app` en `docker-compose.yml`):** build en dos etapas, Node compila la UI y Python la sirve. En un contenedor no hay login de Claude: necesita `ANTHROPIC_API_KEY` y **se paga por uso**. Localmente no hace falta. `private/` se monta como volumen y nunca entra en la imagen.
+
+**Tests (`tests/test_api.py`):** `TestClient` con archivos en un directorio temporal: filtros, 404, tracker (alta, duplicado, cambio, estado inválido = 422), stream SSE con el evaluador falso, y 503 cuando no hay base vectorial.
+
+**Preguntas de entrevista**
+- **¿Cómo mostrás el progreso de una tarea larga de un LLM?** Con streaming: SSE desde un generador async que emite un evento por paso. El cliente lo renderiza a medida que llega.
+- **¿Qué falta para producción?** Auth, rate limiting y presupuesto por usuario, una cola de trabajos (que las tareas largas no dependan de una conexión HTTP abierta) y una base de datos en lugar de JSON.
+
+---
+
+## Fase 7 — UI en Vue (`web/`)
+
+**Stack:** Vue 3 + TypeScript + Vite + vue-router. En desarrollo, Vite (puerto 5173) reenvía `/api` a Python (8000). En producción, la API sirve `web/dist`.
+
+**Pantallas**
+- **Ofertas:** lista ordenada por encaje, filtro por veredicto y texto, y botones para buscar ofertas nuevas y evaluar 5 más (con progreso en vivo).
+- **Detalle:** evaluación (cumple, falta, alertas), alta en postulaciones y carta con verificación, con las fuentes de cada afirmación.
+- **Agente:** formulario con objetivo y presupuesto, y la **bitácora en vivo** de cada herramienta que usa.
+- **Postulaciones:** tablero por estado con notas. Los cambios son optimistas y se revierten si la API falla.
+- **Búsqueda por significado:** consulta en lenguaje natural con la similitud dibujada como barra.
+
+**Diseño (v3, el actual):** partí de un mockup propio (barra lateral verde solo con íconos, acento rosa) y lo llevé a 7 pantallas:
+- **Inicio:** una caja tipo prompt ("¿Qué tipo de trabajo querés encontrar?") que abre el agente y lo arranca solo (`/agente?pedido=…&auto=1`), la última ejecución y 4 métricas.
+- **Ofertas:** 3 columnas: filtros (encaje mínimo, tipo de puesto, ubicación, salario), lista con pestañas por veredicto y vista previa. En móvil los filtros se pliegan para que la lista se vea primero.
+- **Detalle:** pestañas Análisis / Descripción / Requisitos / Carta, anillo de encaje y una "próxima acción" calculada según el estado.
+- **Postulaciones:** lista o kanban, y un **seguimiento** por etapas (Evaluada → Guardada → Aplicada → Entrevista → Oferta) con la fecha de cada paso. Para eso la API guarda un `historial` y solo lo extiende cuando el estado cambia de verdad.
+- **Agente:** objetivo + presupuesto a la izquierda, timeline en vivo a la derecha, ranking y costo al terminar. La API guarda la última ejecución (`/api/agente/ultima`) para mostrarla en Inicio.
+- **Búsqueda semántica** y **Evals:** la matriz de confusión pinta en verde los aciertos y en rojo los errores graves (decir "aplicar" cuando era "descartar").
+- Tipografía: Fredoka (redondeada, más juvenil) para títulos y números grandes; Plus Jakarta Sans para el texto. Verde en degradé para la barra lateral y los botones principales; rosa pastel para rellenos y un rosa más oscuro para texto e íconos, porque el pastel sobre blanco no tiene contraste suficiente. Íconos Lucide. El color nunca va solo: siempre con texto o ícono.
+
+*Lecciones:* (1) la v1 (señales de pistas de esquí) era original pero exigía aprender un código visual; en una herramienta de trabajo gana lo intuitivo. (2) Antes de rediseñar conviene tener un mockup: la v3 salió en una iteración porque el objetivo estaba dibujado.
+
+**Calidad:** TypeScript estricto (`vue-tsc` en el build), cliente de API tipado, foco visible, `prefers-reduced-motion`, diseño responsive y estados vacíos y de error con instrucciones concretas ("¿Está corriendo `uv run job-agent api`?").
+
+**Preguntas de entrevista**
+- **¿Por qué una UI en un proyecto de AI Engineer?** Porque el valor de un agente se ve cuando alguien lo usa: la bitácora en vivo hace visible el razonamiento y el costo. Y porque el puesto suele ser full stack.
+- **¿Cómo manejás estados de carga largos?** Con eventos incrementales (SSE), botones deshabilitados mientras trabaja, opción de detener y mensajes de progreso concretos.

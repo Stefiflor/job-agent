@@ -20,6 +20,7 @@ from job_agent.models import Candidata
 EXPERIENCIA = config.PRIVADO / "experiencia.md"
 DIR_CARTAS = config.PRIVADO / "cartas"
 K_FRAGMENTOS = 10
+MAX_SIN_RETRIEVAL = 60  # con una base chica, pasar todo es mejor que filtrar
 MAX_INTENTOS = 2
 
 
@@ -44,9 +45,15 @@ def fragmentar(markdown: str) -> list[Fragmento]:
 
 
 def recuperar(fragmentos: list[Fragmento], consulta: str, embedder: Embedder, k: int = K_FRAGMENTOS) -> list[Fragmento]:
-    """Retrieval en memoria: con ~40 fragmentos, pgvector no aporta nada y suma latencia."""
+    """Retrieval en memoria: con ~40 fragmentos, pgvector no aporta nada y suma latencia.
+
+    Si la base es chica, se devuelven todos: el filtro por similitud con la oferta dejaba
+    afuera los logros más fuertes porque compartían menos palabras con el aviso.
+    """
     if not fragmentos:
         return []
+    if len(fragmentos) <= MAX_SIN_RETRIEVAL:
+        return list(fragmentos)
     m = embedder.encode([f"{f.seccion}: {f.texto}" for f in fragmentos])
     q = embedder.encode([consulta])[0]
     orden = np.argsort(-(m @ q))[:k]
@@ -85,6 +92,7 @@ PROMPT_REDACTOR = """You write cover letters for a job candidate. Hard rules:
 - Every factual claim about the candidate must come from the EXPERIENCE FRAGMENTS. Do not invent metrics, years, employers, titles or technologies.
 - List every factual claim in "afirmaciones" with the fragment ids that support it.
 - Connect her experience to the 2-3 most important requirements of the posting. Be specific, not generic.
+- Lead with professional production work; use personal projects as supporting evidence, not as the main story.
 - If a key requirement is missing from her experience, do not pretend; you may mention briefly that she is actively building it only if a fragment says so.
 - 180-250 words, plain text, no placeholders, no subject line. Sign as "Florencia Gambero".
 - Write in {idioma}."""

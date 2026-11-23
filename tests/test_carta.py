@@ -21,9 +21,15 @@ def test_fragmentar_un_fragmento_por_bullet_con_seccion():
     assert [(x.id, x.seccion) for x in f] == [("E1", "Agent"), ("E2", "Agent"), ("E3", "Frontend")]
 
 
-def test_recuperar_prioriza_lo_parecido():
+def test_recuperar_prioriza_lo_parecido(monkeypatch):
+    monkeypatch.setattr(carta, "MAX_SIN_RETRIEVAL", 0)  # fuerza el retrieval
     r = recuperar(fragmentar(MD), "tool calling booking agent", EmbedderFalso(), k=1)
     assert r[0].id == "E1"
+
+
+def test_base_chica_pasa_todos_los_fragmentos():
+    r = recuperar(fragmentar(MD), "React frontend", EmbedderFalso(), k=1)
+    assert [f.id for f in r] == ["E1", "E2", "E3"]
 
 
 def _generar_con(respuestas, monkeypatch):

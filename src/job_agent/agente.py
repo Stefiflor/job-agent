@@ -287,7 +287,8 @@ def opciones_agente(herramientas: list, max_turnos: int) -> ClaudeAgentOptions:
     )
 
 
-async def correr(pedido: str, objetivo: int, max_evaluaciones: int, max_turnos: int = 40) -> None:
+async def eventos(pedido: str, objetivo: int, max_evaluaciones: int, max_turnos: int = 40):
+    """Corre el agente y emite eventos (dicts). Lo consumen la CLI y la API (SSE)."""
     s = Sesion(
         criterios=config.cargar_criterios(),
         cv=config.CV.read_text(encoding="utf-8"),
@@ -306,24 +307,51 @@ async def correr(pedido: str, objetivo: int, max_evaluaciones: int, max_turnos: 
             for b in msg.content:
                 if isinstance(b, ToolUseBlock):
                     nombre = b.name.removeprefix(f"mcp__{SERVIDOR}__")
-                    print(f"  🔧 {nombre}({json.dumps(b.input, ensure_ascii=False)})")
+                    if nombre != "StructuredOutput":
+                        yield {"tipo": "herramienta", "nombre": nombre, "input": b.input}
                 elif isinstance(b, TextBlock) and b.text.strip():
-                    print(f"  💭 {b.text.strip()[:300]}")
+                    yield {"tipo": "pensamiento", "texto": b.text.strip()[:500]}
         elif isinstance(msg, ResultMessage):
             resultado = msg
 
-    print()
     if resultado is None or resultado.structured_output is None:
-        print(f"⚠ El agente no devolvió informe ({resultado.subtype if resultado else 'sin resultado'}).")
+        yield {"tipo": "error", "texto": f"El agente no devolvió informe ({resultado.subtype if resultado else 'sin resultado'})."}
     else:
         informe = Informe.model_validate(resultado.structured_output)
-        print("RANKING")
-        for i, it in enumerate(informe.ranking, 1):
-            link = s.ofertas[it.id].link if it.id in s.ofertas else ""
-            print(f"{i}. {it.encaje} | {it.titulo} | {it.empresa}\n   {it.por_que}\n   {link}")
-        print(f"\n{informe.resumen_busqueda}")
-    if resultado:
-        print(
-            f"\nTurnos: {resultado.num_turns} · evaluaciones nuevas: {s.evaluaciones_hechas}/{max_evaluaciones} · "
-            f"costo estimado: agente ${resultado.total_cost_usd or 0:.3f} + evaluaciones ${s.costo_usd:.3f}"
-        )
+        yield {
+            "tipo": "informe",
+            "ranking": [
+                it.model_dump() | {"link": s.ofertas[it.id].link if it.id in s.ofertas else None}
+                for it in informe.ranking
+            ],
+            "resumen": informe.resumen_busqueda,
+        }
+    yield {
+        "tipo": "fin",
+        "turnos": resultado.num_turns if resultado else 0,
+        "evaluaciones_nuevas": s.evaluaciones_hechas,
+        "max_evaluaciones": max_evaluaciones,
+        "costo_agente_usd": (resultado.total_cost_usd or 0) if resultado else 0,
+        "costo_evaluaciones_usd": s.costo_usd,
+    }
+
+
+async def correr(pedido: str, objetivo: int, max_evaluaciones: int, max_turnos: int = 40) -> None:
+    """Versión CLI: imprime los eventos."""
+    async for e in eventos(pedido, objetivo, max_evaluaciones, max_turnos):
+        if e["tipo"] == "herramienta":
+            print(f"  🔧 {e['nombre']}({json.dumps(e['input'], ensure_ascii=False)})")
+        elif e["tipo"] == "pensamiento":
+            print(f"  💭 {e['texto'][:300]}")
+        elif e["tipo"] == "error":
+            print(f"\n⚠ {e['texto']}")
+        elif e["tipo"] == "informe":
+            print("\nRANKING")
+            for i, it in enumerate(e["ranking"], 1):
+                print(f"{i}. {it['encaje']} | {it['titulo']} | {it['empresa']}\n   {it['por_que']}\n   {it['link'] or ''}")
+            print(f"\n{e['resumen']}")
+        elif e["tipo"] == "fin":
+            print(
+                f"\nTurnos: {e['turnos']} · evaluaciones nuevas: {e['evaluaciones_nuevas']}/{e['max_evaluaciones']} · "
+                f"costo estimado: agente ${e['costo_agente_usd']:.3f} + evaluaciones ${e['costo_evaluaciones_usd']:.3f}"
+            )
