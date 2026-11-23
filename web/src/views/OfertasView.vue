@@ -113,7 +113,7 @@ import { useRoute } from "vue-router";
 import {
   ArrowRight, ArrowUpDown, Bookmark, BookmarkCheck, ChevronDown, ChevronRight, Globe, Inbox, Loader2, RefreshCw, Send,
   Sparkles, TriangleAlert, Wallet,
-} from "lucide-vue-next";
+} from "@lucide/vue";
 import { api, escuchar, formatoSalario, ubicacionCorta, type Oferta, type Veredicto } from "../api";
 import Avatar from "../components/Avatar.vue";
 import ScorePill from "../components/ScorePill.vue";

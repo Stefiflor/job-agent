@@ -83,7 +83,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { Bookmark, Check, LayoutGrid, RotateCcw, Search, SquareKanban, TriangleAlert, X } from "lucide-vue-next";
+import { Bookmark, Check, LayoutGrid, RotateCcw, Search, SquareKanban, TriangleAlert, X } from "@lucide/vue";
 import { api, ESTADOS, formatoFecha, type Estado, type ItemTracker } from "../api";
 import Avatar from "../components/Avatar.vue";
 import Etapa from "../components/Etapa.vue";

@@ -45,7 +45,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { ChartNoAxesColumn, Loader2 } from "lucide-vue-next";
+import { ChartNoAxesColumn, Loader2 } from "@lucide/vue";
 import { api, type ResultadoEvals } from "../api";
 import Topbar from "../components/Topbar.vue";
 

@@ -38,7 +38,7 @@
 
 <script setup lang="ts">
 import { ref } from "vue";
-import { ArrowLeft, ArrowRight, Loader2, ScanSearch, SearchX, TriangleAlert } from "lucide-vue-next";
+import { ArrowLeft, ArrowRight, Loader2, ScanSearch, SearchX, TriangleAlert } from "@lucide/vue";
 import { api, type ResultadoSemantico } from "../api";
 import Avatar from "../components/Avatar.vue";
 import Topbar from "../components/Topbar.vue";

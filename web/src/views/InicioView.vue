@@ -66,7 +66,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
-import { ArrowRight, BadgeCheck, Check, Layers, Play, Plus, Search, Send, Sparkles, TriangleAlert } from "lucide-vue-next";
+import { ArrowRight, BadgeCheck, Check, Layers, Play, Plus, Search, Send, Sparkles, TriangleAlert } from "@lucide/vue";
 import { api, formatoFecha, type Resumen, type UltimaEjecucion } from "../api";
 import Topbar from "../components/Topbar.vue";
 

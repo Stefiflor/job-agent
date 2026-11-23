@@ -234,7 +234,7 @@ async def api_carta(oid: str, pedido: PedidoCarta) -> dict:
     if not carta.EXPERIENCIA.exists():
         raise HTTPException(409, "Falta private/experiencia.md")
     frags = carta.fragmentar(carta.EXPERIENCIA.read_text(encoding="utf-8"))
-    r = await carta.generar(c, frags, Model2VecEmbedder(), pedido.idioma)
+    r = await carta.generar(c, frags, Model2VecEmbedder(), pedido.idioma, config.cargar_criterios().nombre)
     carta.guardar(c, r)
     return {
         "verificada": bool(r.verificacion and r.verificacion.respaldada),

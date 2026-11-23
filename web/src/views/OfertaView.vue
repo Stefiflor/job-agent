@@ -115,7 +115,7 @@ import { computed, onMounted, ref } from "vue";
 import {
   ArrowLeft, Bookmark, BookmarkCheck, Check, Circle, CircleAlert, CircleCheck, CircleHelp, Copy, ExternalLink,
   Globe, Loader2, PenLine, Plus, Send, ShieldAlert, ShieldCheck, TriangleAlert, Wallet, Zap,
-} from "lucide-vue-next";
+} from "@lucide/vue";
 import { api, formatoSalario, ubicacionCorta, type DetalleOferta, type ResultadoCarta } from "../api";
 import Avatar from "../components/Avatar.vue";
 import ScoreRing from "../components/ScoreRing.vue";

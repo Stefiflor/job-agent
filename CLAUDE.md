@@ -26,7 +26,7 @@ Agente que busca ofertas remotas (Himalayas API) y las evalúa contra un CV con 
 - `web/` — Vue 3 + TS + Vite. `src/api.ts` es el cliente tipado de la API.
 - `src/job_agent/agente.py` — agente: herramientas MCP en proceso, presupuesto, hook de logs.
 - `src/job_agent/models.py` — modelos pydantic; `Evaluacion` define el JSON Schema de la salida.
-- `private/` — CV, criterios y resultados. Ignorado por git. Nunca commitear nada de ahí.
+- `private/` — CV, criterios (incluye `nombre`, la firma de las cartas) y resultados. Ignorado por git. Nunca commitear nada de ahí.
 - `docs/APRENDIZAJE.md` — qué se hizo en cada fase y por qué.
 
 ## Reglas

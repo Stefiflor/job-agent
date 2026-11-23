@@ -124,7 +124,7 @@ async def cmd_carta(link: str, idioma: str) -> None:
         raise SystemExit(f"Falta {carta.EXPERIENCIA.relative_to(config.RAIZ)}: es la única fuente de la carta.")
     fragmentos = carta.fragmentar(carta.EXPERIENCIA.read_text(encoding="utf-8"))
     print(f"{c.titulo} | {c.empresa} · {len(fragmentos)} fragmentos de experiencia")
-    r = await carta.generar(c, fragmentos, Model2VecEmbedder(), idioma)
+    r = await carta.generar(c, fragmentos, Model2VecEmbedder(), idioma, config.cargar_criterios().nombre)
     ruta = carta.guardar(c, r)
     if r.borrador:
         print("\n" + r.borrador.carta + "\n")

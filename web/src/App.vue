@@ -22,7 +22,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
-import { ChartNoAxesColumn, House, Search, Sparkles, SquareKanban } from "lucide-vue-next";
+import { ChartNoAxesColumn, House, Search, Sparkles, SquareKanban } from "@lucide/vue";
 
 const route = useRoute();
 const items = [

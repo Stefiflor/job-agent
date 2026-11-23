@@ -71,7 +71,7 @@ Correr: `uv run pytest`
 
 ### Ajustes después de la primera corrida real
 
-- **Residencia mixta (campo `situacion` en criterios).** La candidata vive medio año en Argentina y medio en Europa. Un filtro por país no alcanza para eso: los países pasan por código (Argentina + UE) y el matiz ("exige residencia fija todo el año") lo decide el LLM leyendo `situacion`. Es el mismo patrón de siempre: código para lo binario, LLM para lo ambiguo.
+- **Residencia mixta (campo `situacion` en criterios).** Hay perfiles que reparten el año entre países. Un filtro por país no alcanza para eso: los países permitidos pasan por código (`paisesResidencia`) y el matiz ("exige residencia fija todo el año") lo decide el LLM leyendo `situacion`. Es el mismo patrón de siempre: código para lo binario, LLM para lo ambiguo.
 - **Bug: `aclose(): asynchronous generator is already running`.** El evaluador hacía `return` dentro del `async for` sobre `query()`. Eso deja el generador async a medio consumir y, al cerrarlo, Python 3.14 tira el error. Solución: consumir el stream completo y procesar el `ResultMessage` después del loop. Hay un test de regresión que lo cubre.
   - *Pregunta de entrevista:* "¿Qué pasa si cortás un async generator a mitad?" → queda pendiente de cerrar; su `finally` corre más tarde, en otro contexto, y puede fallar. Se evita consumiéndolo completo o usando `contextlib.aclosing`.
 - **Costo medido:** 3 evaluaciones = USD 0,264 estimados (~USD 0,09 por oferta). Evaluar 56 candidatas equivaldría a ~USD 5 si se pagara por API. Con el plan Pro sale del cupo.
@@ -318,3 +318,18 @@ Arreglo: si la base tiene 60 fragmentos o menos, se pasan **todos**, y el prompt
 **Preguntas de entrevista**
 - **¿Por qué una UI en un proyecto de AI Engineer?** Porque el valor de un agente se ve cuando alguien lo usa: la bitácora en vivo hace visible el razonamiento y el costo. Y porque el puesto suele ser full stack.
 - **¿Cómo manejás estados de carga largos?** Con eventos incrementales (SSE), botones deshabilitados mientras trabaja, opción de detener y mensajes de progreso concretos.
+
+---
+
+## Fase 8 — Publicar el repo
+
+**Qué se hizo:**
+- **README en inglés** (lo leen reclutadores de cualquier país): qué hace, arquitectura, decisiones de diseño, cómo correrlo y estado. Las capturas usan empresas inventadas para no atribuirle puntajes falsos a empresas reales.
+- **Dependencias al día:** vite 8, vue-tsc 3, `@vitejs/plugin-vue` 6 y `@lucide/vue` (el paquete `lucide-vue-next` quedó deprecado). `npm audit` pasó de 5 vulnerabilidades a 0. Eran de herramientas de desarrollo, pero GitHub las marca apenas subís el repo, y un repo de portfolio con alertas rojas da mala impresión. Al actualizar, vue-tsc 3 encontró un error de tipos que la versión 2 dejaba pasar (el informe del agente estaba tipado como `any`).
+- **Revisión de privacidad antes de publicar:** nada de `private/` en git, la firma de las cartas sale de `criterios.json` (campo `nombre`) en vez de estar escrita en el código, y la documentación no dice dónde vive la candidata.
+- **Se borró el prototipo en TypeScript** (`v1-typescript/` y el `package.json` de la raíz). Sigue en el historial de git, que cuenta la migración a Python.
+
+**Lección:** antes de hacer público un repo, buscá en todo el código y el historial datos personales, claves y nombres de clientes. Lo que se sube a un repo público hay que darlo por copiado, aunque después lo borres.
+
+**Preguntas de entrevista**
+- **¿Cómo actualizás una dependencia con cambios incompatibles?** Una por vez o en grupo chico, con el build y los tests como red, y revisando la app (acá, capturas de cada pantalla) porque los tests no ven todo.

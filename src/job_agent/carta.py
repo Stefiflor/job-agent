@@ -94,7 +94,7 @@ PROMPT_REDACTOR = """You write cover letters for a job candidate. Hard rules:
 - Connect her experience to the 2-3 most important requirements of the posting. Be specific, not generic.
 - Lead with professional production work; use personal projects as supporting evidence, not as the main story.
 - If a key requirement is missing from her experience, do not pretend; you may mention briefly that she is actively building it only if a fragment says so.
-- 180-250 words, plain text, no placeholders, no subject line. Sign as "Florencia Gambero".
+- 180-250 words, plain text, no placeholders, no subject line. {firma}
 - Write in {idioma}."""
 
 PROMPT_VERIFICADOR = """You check a cover letter for groundedness. You receive the experience fragments, the letter and its list of claims.
@@ -154,7 +154,8 @@ class ResultadoCarta:
     costo_usd: float
 
 
-async def generar(c: Candidata, fragmentos: list[Fragmento], embedder: Embedder, idioma: str = "English") -> ResultadoCarta:
+async def generar(c: Candidata, fragmentos: list[Fragmento], embedder: Embedder, idioma: str = "English", firma: str = "") -> ResultadoCarta:
+    firma = f'Sign as "{firma}".' if firma else "End with a sign-off, without a name."
     frags = recuperar(fragmentos, f"{c.titulo}\n{c.descripcion[:3000]}", embedder)
     ids_validos = {f.id for f in frags}
     feedback: list[Problema] = []
@@ -162,7 +163,7 @@ async def generar(c: Candidata, fragmentos: list[Fragmento], embedder: Embedder,
     costo = 0.0
 
     for intento in range(1, MAX_INTENTOS + 1):
-        borrador, c1 = await _estructurado(_prompt_borrador(c, frags, feedback), PROMPT_REDACTOR.format(idioma=idioma), Borrador)
+        borrador, c1 = await _estructurado(_prompt_borrador(c, frags, feedback), PROMPT_REDACTOR.format(idioma=idioma, firma=firma), Borrador)
         costo += c1
         if borrador is None:
             return ResultadoCarta(None, None, frags, intento, costo)

@@ -67,7 +67,7 @@ import { useRoute } from "vue-router";
 import {
   BookmarkPlus, Bot, Check, ExternalLink, FileText, Gauge, Info, Lightbulb, Loader2, Play, ScanSearch, Search,
   Sparkles, Square, TriangleAlert,
-} from "lucide-vue-next";
+} from "@lucide/vue";
 import { escuchar } from "../api";
 import Avatar from "../components/Avatar.vue";
 import ScorePill from "../components/ScorePill.vue";
@@ -79,7 +79,8 @@ const objetivo = ref(3);
 const presupuesto = ref(5);
 const corriendo = ref(false);
 const pasos = ref<any[]>([]);
-const informe = ref<any>(null);
+interface ItemRanking { id: string; titulo: string; empresa: string; encaje: number; por_que: string; link?: string }
+const informe = ref<{ ranking: ItemRanking[]; resumen: string } | null>(null);
 const fin = ref<any>(null);
 let cortar: (() => void) | null = null;
 

@@ -20,6 +20,7 @@ class ZonaHoraria(BaseModel):
 
 
 class Criterios(BaseModel):
+    nombre: str = ""  # firma de las cartas
     roles: list[str]
     idioma: str = ""
     zona_horaria: ZonaHoraria = Field(alias="zonaHoraria")
