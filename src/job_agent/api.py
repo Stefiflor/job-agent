@@ -325,6 +325,41 @@ def ultimo_eval() -> dict | None:
             "repeticiones": d["repeticiones"], "costo_usd": d.get("costo_usd")}
 
 
+class Etiqueta(BaseModel):
+    veredicto: Literal["aplicar", "dudoso", "descartar", ""]
+    nota: str = ""
+
+
+@app.get("/api/evals/etiquetas")
+def evals_etiquetas() -> list[dict]:
+    if not evals.DATASET.exists() or not evals.ETIQUETAS.exists():
+        raise HTTPException(404, "Todavía no hay ofertas para etiquetar.")
+    return evals.para_etiquetar()
+
+
+@app.put("/api/evals/etiquetas/{oid}")
+async def evals_etiquetar(oid: str, e: Etiqueta) -> dict:
+    async with _lock_archivos:
+        try:
+            return evals.guardar_etiqueta(oid, e.veredicto, e.nota)
+        except KeyError:
+            raise HTTPException(404, f"No existe {oid} en el set de evals")
+
+
+@app.post("/api/evals/preparar", status_code=201)
+async def evals_preparar(n: int = Query(25, ge=5, le=60)) -> dict:
+    async with _lock_archivos:
+        try:
+            return {"ofertas": evals.preparar(n)}
+        except ValueError as ex:
+            raise HTTPException(409, str(ex))
+
+
+@app.get("/api/evals/correr/stream")
+def evals_correr(repeticiones: int = Query(2, ge=1, le=3)) -> StreamingResponse:
+    return _stream(evals.eventos_correr(repeticiones))
+
+
 # --- Frontend compilado (Fase 7) ------------------------------------------------------
 
 if WEB_DIST.exists():

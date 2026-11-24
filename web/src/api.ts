@@ -57,6 +57,12 @@ export interface ResultadoEvals {
     consistencia: number; desvio_encaje_promedio: number; confusion: Record<string, number> };
 }
 
+export interface ItemEtiqueta {
+  id: string; titulo: string; empresa: string; link: string;
+  salario: { min: number; max: number } | null; por_hora: boolean; paises: string[]; publicada: string | null;
+  descripcion: string; tu_veredicto: Veredicto | ""; tu_nota: string;
+}
+
 export interface Resumen {
   candidatas: number; evaluadas: number; por_veredicto: Partial<Record<Veredicto, number>>;
   costo_evaluaciones_usd: number; tracker: Record<Estado, number>;
@@ -125,6 +131,10 @@ export const api = {
     pedir<ItemTracker>(`/tracker/${id}`, { method: "PATCH", body: JSON.stringify(cambio) }),
   ultimaEjecucion: () => pedir<UltimaEjecucion | null>("/agente/ultima"),
   evals: () => pedir<ResultadoEvals | null>("/evals"),
+  etiquetas: () => pedir<ItemEtiqueta[]>("/evals/etiquetas"),
+  etiquetar: (id: string, veredicto: Veredicto | "", nota = "") =>
+    pedir<unknown>(`/evals/etiquetas/${id}`, { method: "PUT", body: JSON.stringify({ veredicto, nota }) }),
+  prepararEvals: (n = 25) => pedir<{ ofertas: number }>(`/evals/preparar?n=${n}`, { method: "POST" }),
   semantico: (q: string, todas = false) =>
     pedir<ResultadoSemantico[]>(`/rag/buscar?${new URLSearchParams({ q, todas: String(todas) })}`),
 };

@@ -333,3 +333,11 @@ Arreglo: si la base tiene 60 fragmentos o menos, se pasan **todos**, y el prompt
 
 **Preguntas de entrevista**
 - **¿Cómo actualizás una dependencia con cambios incompatibles?** Una por vez o en grupo chico, con el build y los tests como red, y revisando la app (acá, capturas de cada pantalla) porque los tests no ven todo.
+
+**Etiquetado a ciegas en la UI.** Etiquetar en un CSV era incómodo (Excel en español lo abre todo en una columna) y fácil de sesgar: la pantalla de Ofertas muestra el veredicto del agente. Se agregó `/evals/etiquetar`:
+- Una oferta por vez con su descripción, y tres botones (atajos 1/2/3). Guarda al instante y salta a la próxima sin etiquetar.
+- **El veredicto del modelo nunca llega al navegador** mientras etiquetás: `para_etiquetar()` arma la respuesta solo con datos de la oferta, y un test verifica que no aparezca. Ocultarlo con CSS no alcanza, porque se vería en las herramientas del navegador.
+- El CSV sigue siendo la fuente de verdad (escritura atómica), así que la CLI y la UI son intercambiables. Además, el lector ahora acepta CSV guardados por Excel (BOM y `;`).
+- `evals correr` pasó a ser un generador de eventos: la CLI los imprime y la API los manda por SSE, con progreso en vivo. Es el mismo patrón que el agente: un núcleo y dos interfaces.
+
+*Pregunta de entrevista:* "¿Cómo evitás sesgar tus etiquetas?" → Etiquetado a ciegas, muestra estratificada, orden aleatorio, y la información del modelo fuera de la respuesta de la API, no solo fuera de la vista.

@@ -16,7 +16,7 @@ An AI agent that searches remote job postings, filters them against hard criteri
 | **Agent** | Claude decides what to search, which postings to read and which to evaluate, using custom tools. The evaluation budget is enforced by the tools, not by the prompt. |
 | **Semantic search** | Postings are embedded (model2vec) and stored in Postgres + pgvector with an HNSW index. Finds "build agents that call APIs for customer support" even when the posting uses different words. |
 | **Cover letters (RAG)** | Generated only from a fact base of the candidate's experience. Every claim cites its source fragment; a code check and a second model verify groundedness before the letter is accepted. |
-| **Evals** | Stratified sample, blind human labels, repeated runs. Reports exact agreement, severe errors, consistency and a confusion matrix. |
+| **Evals** | Stratified sample, blind labeling screen (the model's verdict is never sent to the browser while you label), repeated runs streamed live. Reports exact agreement, severe errors, consistency and a confusion matrix. |
 | **UI** | Offers with filters and preview, detail with analysis and letter, application tracker with stage history, live agent timeline (SSE), eval dashboard. |
 
 ## Architecture
@@ -107,12 +107,12 @@ uv run job-agent rag indexar --feed 10
 uv run job-agent rag buscar "agents that call APIs for customer support"
 ```
 
-Evals:
+Evals, from the UI (**Quality → Label**) or the CLI:
 
 ```bash
-uv run job-agent evals preparar --n 25   # stratified sample → private/evals/etiquetas.csv
-# fill in the tu_veredicto column by hand, without looking at the model's verdict
-uv run job-agent evals correr --repeticiones 2
+uv run job-agent evals preparar --n 25   # stratified sample of already-evaluated postings
+# label them blind in the UI (keys 1/2/3), or fill tu_veredicto in private/evals/etiquetas.csv
+uv run job-agent evals correr --repeticiones 2   # or the "Run" button, with live progress
 ```
 
 Tests: `uv run pytest` (the pgvector tests run when `DATABASE_URL_TEST` is set).

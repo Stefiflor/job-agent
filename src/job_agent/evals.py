@@ -14,6 +14,7 @@ import statistics
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
+from typing import AsyncIterator
 
 from job_agent import config
 from job_agent.evaluador import cargar_evaluadas, evaluar
@@ -45,12 +46,13 @@ def muestra_estratificada(evaluadas: list, n: int, semilla: int = 42) -> list:
     return elegidas
 
 
-def preparar(n: int) -> None:
+def preparar(n: int) -> int:
+    """Arma el dataset y el CSV vacío. ValueError si ya existen o si no alcanzan las evaluadas."""
     if ETIQUETAS.exists():
-        raise SystemExit(f"Ya existe {ETIQUETAS.relative_to(config.RAIZ)}. Borralo si querés empezar de nuevo.")
-    evaluadas = cargar_evaluadas(config.EVALUADAS)
+        raise ValueError(f"Ya existe {ETIQUETAS.relative_to(config.RAIZ)}. Borralo si querés empezar de nuevo.")
+    evaluadas = cargar_evaluadas(config.EVALUADAS) if config.EVALUADAS.exists() else []
     if len(evaluadas) < n:
-        raise SystemExit(f"Hay {len(evaluadas)} ofertas evaluadas; corré `evaluar` primero o pedí menos.")
+        raise ValueError(f"Hay {len(evaluadas)} ofertas evaluadas y hacen falta {n}: evaluá más ofertas primero.")
     elegidas = muestra_estratificada(evaluadas, n)
 
     DIR_EVALS.mkdir(parents=True, exist_ok=True)
@@ -62,23 +64,67 @@ def preparar(n: int) -> None:
         for d in dataset:
             c = d["candidata"]
             w.writerow([d["id"], c["titulo"], c["empresa"], c["link"], "", ""])
-    print(f"{n} ofertas → {ETIQUETAS.relative_to(config.RAIZ)}")
-    print("Abrí cada link, decidí vos y completá tu_veredicto con: aplicar / dudoso / descartar.")
+    return len(dataset)
 
 
 # --- Métricas (funciones puras, testeadas) -----------------------------------
 
-def leer_etiquetas(ruta: Path = ETIQUETAS) -> dict[str, str]:
-    with ruta.open(encoding="utf-8") as f:
-        filas = list(csv.DictReader(f))
+COLUMNAS = ["id", "titulo", "empresa", "link", "tu_veredicto", "tu_nota"]
+
+
+def leer_filas(ruta: Path | None = None) -> list[dict]:
+    ruta = ruta or ETIQUETAS  # se resuelve al llamar, no al definir la función
+    # utf-8-sig y delimitador detectado: Excel en español guarda con BOM y con ";".
+    texto = ruta.read_text(encoding="utf-8-sig")
+    dialecto = csv.Sniffer().sniff(texto.splitlines()[0], delimiters=",;\t")
+    return list(csv.DictReader(texto.splitlines(), dialect=dialecto))
+
+
+def leer_etiquetas(ruta: Path | None = None) -> dict[str, str]:
     etiquetas = {}
-    for fila in filas:
-        v = fila["tu_veredicto"].strip().lower()
+    for fila in leer_filas(ruta):
+        v = (fila.get("tu_veredicto") or "").strip().lower()
         if v:
             if v not in ORDEN:
-                raise SystemExit(f"{fila['id']}: '{v}' no es válido. Usá aplicar / dudoso / descartar.")
+                raise ValueError(f"{fila['id']}: '{v}' no es válido. Usá aplicar / dudoso / descartar.")
             etiquetas[fila["id"]] = v
     return etiquetas
+
+
+def guardar_etiqueta(oid: str, veredicto: str, nota: str = "", ruta: Path | None = None) -> dict:
+    """Actualiza una fila del CSV. Veredicto vacío = sin etiquetar (por ej. oferta vencida)."""
+    ruta = ruta or ETIQUETAS
+    if veredicto and veredicto not in ORDEN:
+        raise ValueError(f"'{veredicto}' no es válido.")
+    filas = leer_filas(ruta)
+    fila = next((f for f in filas if f["id"] == oid), None)
+    if fila is None:
+        raise KeyError(oid)
+    fila["tu_veredicto"], fila["tu_nota"] = veredicto, nota.strip()
+    tmp = ruta.with_suffix(".tmp")  # escritura atómica: un corte no deja el CSV a medias
+    with tmp.open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=COLUMNAS, extrasaction="ignore")
+        w.writeheader()
+        w.writerows(filas)
+    tmp.replace(ruta)
+    return fila
+
+
+def para_etiquetar() -> list[dict]:
+    """Las ofertas del dataset con tu etiqueta. Nunca incluye el veredicto del modelo:
+    verlo antes de decidir sesga la etiqueta y el eval deja de medir algo."""
+    filas = {f["id"]: f for f in leer_filas()}
+    items = []
+    for d in json.loads(DATASET.read_text(encoding="utf-8")):
+        c, f = d["candidata"], filas.get(d["id"], {})
+        items.append({
+            "id": d["id"], "titulo": c["titulo"], "empresa": c["empresa"], "link": c["link"],
+            "salario": c.get("salario_usd_mes"), "por_hora": c.get("por_hora", False),
+            "paises": c.get("paises_validos", []), "publicada": c.get("publicada"),
+            "descripcion": c.get("descripcion", ""),
+            "tu_veredicto": (f.get("tu_veredicto") or "").strip().lower(), "tu_nota": f.get("tu_nota") or "",
+        })
+    return items
 
 
 def metricas(humano: dict[str, str], modelo: dict[str, list[str]], encajes: dict[str, list[int]]) -> dict:
@@ -127,10 +173,11 @@ Matriz de confusión (filas = humano, columnas = modelo):
 
 # --- Correr ------------------------------------------------------------------
 
-async def correr(repeticiones: int) -> None:
+async def eventos_correr(repeticiones: int) -> AsyncIterator[dict]:
+    """Evalúa cada oferta etiquetada N veces. Emite 'progreso' por evaluación, 'resultado' y 'fin'."""
     humano = leer_etiquetas()
     if not humano:
-        raise SystemExit("No hay etiquetas: completá tu_veredicto en el CSV.")
+        raise ValueError("No hay etiquetas: etiquetá al menos una oferta.")
     dataset = {d["id"]: Candidata.model_validate(d["candidata"]) for d in json.loads(DATASET.read_text(encoding="utf-8"))}
     criterios = config.cargar_criterios()
     cv = config.CV.read_text(encoding="utf-8")
@@ -145,14 +192,16 @@ async def correr(repeticiones: int) -> None:
             n += 1
             r = await evaluar(dataset[oid], cv, criterios)
             if r is None:
+                yield {"tipo": "progreso", "n": n, "total": total, "id": oid, "titulo": dataset[oid].titulo,
+                       "humano": humano[oid], "modelo": None, "encaje": None}
                 continue
             modelo.setdefault(oid, []).append(r.evaluacion.veredicto)
             encajes.setdefault(oid, []).append(r.evaluacion.encaje)
             costo += r.costo_usd or 0
-            print(f"({n}/{total}) {oid}: vos={humano[oid]} modelo={r.evaluacion.veredicto} ({r.evaluacion.encaje})")
+            yield {"tipo": "progreso", "n": n, "total": total, "id": oid, "titulo": dataset[oid].titulo,
+                   "humano": humano[oid], "modelo": r.evaluacion.veredicto, "encaje": r.evaluacion.encaje}
 
     m = metricas(humano, modelo, encajes)
-    md = informe_markdown(m, repeticiones)
     sello = datetime.now().strftime("%Y-%m-%d_%H%M")
     salida = DIR_EVALS / f"resultado-{sello}.json"
     salida.write_text(
@@ -160,5 +209,14 @@ async def correr(repeticiones: int) -> None:
                     "modelo": modelo, "encajes": encajes, "humano": humano}, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-    print("\n" + md)
-    print(f"\nCosto estimado: ${costo:.3f} · detalle → {salida.relative_to(config.RAIZ)}")
+    yield {"tipo": "resultado", "metricas": m, "repeticiones": repeticiones, "costo_usd": costo, "archivo": salida.name}
+    yield {"tipo": "fin"}
+
+
+async def correr(repeticiones: int) -> None:
+    async for e in eventos_correr(repeticiones):
+        if e["tipo"] == "progreso":
+            print(f"({e['n']}/{e['total']}) {e['id']}: vos={e['humano']} modelo={e['modelo']} ({e['encaje']})")
+        elif e["tipo"] == "resultado":
+            print("\n" + informe_markdown(e["metricas"], e["repeticiones"]))
+            print(f"\nCosto estimado: ${e['costo_usd']:.3f} · detalle → private/evals/{e['archivo']}")

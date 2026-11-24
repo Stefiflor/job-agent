@@ -203,9 +203,16 @@ def main() -> None:
         else:
             cmd_rag_similares(args.link, args.k, args.todas)
     elif args.accion == "preparar":
-        evals.preparar(args.n)
+        try:
+            n = evals.preparar(args.n)
+        except ValueError as e:
+            raise SystemExit(str(e))
+        print(f"{n} ofertas → private/evals/etiquetas.csv. Etiquetalas en la app (Calidad → Etiquetar) o en el CSV.")
     else:
-        asyncio.run(evals.correr(args.repeticiones))
+        try:
+            asyncio.run(evals.correr(args.repeticiones))
+        except ValueError as e:
+            raise SystemExit(str(e))
 
 
 if __name__ == "__main__":

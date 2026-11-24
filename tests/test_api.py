@@ -113,3 +113,62 @@ def test_agente_guarda_ultima_ejecucion(cliente, monkeypatch):
         list(r.iter_lines())
     u = cliente.get("/api/agente/ultima").json()
     assert u["ofertas_analizadas"] == 2 and u["evaluaciones"] == 1 and u["costo_usd"] == 0.15
+
+
+# --- Etiquetado a ciegas y evals desde la UI ----------------------------------
+
+@pytest.fixture
+def con_evals(cliente, tmp_path, monkeypatch):
+    from job_agent import evals
+    d = tmp_path / "evals"
+    monkeypatch.setattr(evals, "DIR_EVALS", d)
+    monkeypatch.setattr(evals, "DATASET", d / "dataset.json")
+    monkeypatch.setattr(evals, "ETIQUETAS", d / "etiquetas.csv")
+    return cliente
+
+
+def test_etiquetas_404_sin_preparar(con_evals):
+    assert con_evals.get("/api/evals/etiquetas").status_code == 404
+
+
+def test_etiquetar_no_muestra_el_veredicto_del_modelo(con_evals):
+    from job_agent import evals
+    assert evals.preparar(2) == 2
+    items = con_evals.get("/api/evals/etiquetas").json()
+    assert len(items) == 2 and all(i["tu_veredicto"] == "" for i in items)
+    texto = json.dumps(items)
+    assert "veredicto\": \"aplicar" not in texto and "encaje" not in texto  # nada del modelo
+
+    oid = items[0]["id"]
+    assert con_evals.put(f"/api/evals/etiquetas/{oid}", json={"veredicto": "dudoso", "nota": " pide AWS "}).status_code == 200
+    assert con_evals.put(f"/api/evals/etiquetas/{oid}", json={"veredicto": "quizas"}).status_code == 422
+    assert con_evals.put("/api/evals/etiquetas/e99", json={"veredicto": "aplicar"}).status_code == 404
+    item = next(i for i in con_evals.get("/api/evals/etiquetas").json() if i["id"] == oid)
+    assert (item["tu_veredicto"], item["tu_nota"]) == ("dudoso", "pide AWS")
+    assert evals.leer_etiquetas() == {oid: "dudoso"}
+
+
+def test_preparar_dos_veces_da_409(con_evals):
+    from job_agent import evals
+    evals.preparar(2)
+    assert con_evals.post("/api/evals/preparar", params={"n": 5}).status_code == 409
+
+
+def test_correr_evals_por_stream(con_evals, tmp_path, monkeypatch):
+    from job_agent import evals
+    evals.preparar(2)
+    oid = con_evals.get("/api/evals/etiquetas").json()[0]["id"]
+    con_evals.put(f"/api/evals/etiquetas/{oid}", json={"veredicto": "aplicar"})
+
+    async def evaluar_falso(c, cv, criterios):
+        return evaluada("https://x/a")
+    monkeypatch.setattr(evals, "evaluar", evaluar_falso)
+    monkeypatch.setattr(config, "cargar_criterios", lambda: CRITERIOS)
+    monkeypatch.setattr(config, "CV", tmp_path / "cv.md")
+    config.CV.write_text("cv")
+
+    cuerpo = con_evals.get("/api/evals/correr/stream", params={"repeticiones": 2}).text
+    eventos = [json.loads(l[6:]) for l in cuerpo.splitlines() if l.startswith("data: ")]
+    assert [e["tipo"] for e in eventos] == ["progreso", "progreso", "resultado", "fin"]
+    assert eventos[2]["metricas"]["acuerdo_exacto"] == 1
+    assert con_evals.get("/api/evals").json()["metricas"]["ofertas"] == 1

@@ -1,3 +1,4 @@
+from job_agent import evals
 from job_agent.evals import informe_markdown, metricas, muestra_estratificada
 from job_agent.models import Evaluacion
 from tests.test_agente import EVAL_APLICAR
@@ -37,3 +38,11 @@ def test_informe_tiene_tabla():
     md = informe_markdown(m, 1)
     assert "| Acuerdo exacto con humano | 0% |" in md
     assert "| aplicar | 0 | 1 | 0 |" in md
+
+
+def test_leer_etiquetas_csv_guardado_por_excel(tmp_path):
+    """Excel en español guarda con BOM y separador ';'."""
+    ruta = tmp_path / "etiquetas.csv"
+    ruta.write_text("\ufeffid;titulo;empresa;link;tu_veredicto;tu_nota\n"
+                    "a;T;E;https://x;Aplicar ;\nb;T;E;https://y;;\n", encoding="utf-8")
+    assert evals.leer_etiquetas(ruta) == {"a": "aplicar"}

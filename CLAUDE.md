@@ -7,7 +7,7 @@ Agente que busca ofertas remotas (Himalayas API) y las evalúa contra un CV con 
 - `uv run job-agent buscar` — busca y filtra → `private/candidatas.json`
 - `uv run job-agent evaluar --limite 3` — evalúa con Claude → `private/evaluadas.json` (saltea las ya evaluadas)
 - `uv run job-agent agente "pedido" --objetivo 5 --max-evaluaciones 8` — agente con herramientas
-- `uv run job-agent evals preparar --n 25` / `evals correr --repeticiones 2` — evals contra etiquetas humanas
+- `uv run job-agent evals preparar --n 25` / `evals correr --repeticiones 2` — evals contra etiquetas humanas (también desde la UI: Calidad → Etiquetar / Correr)
 - `docker compose up -d` — Postgres + pgvector en localhost:5433
 - `uv run job-agent rag indexar --feed 10` / `rag buscar "..."` / `rag similares <link>` — índice semántico
 - `uv run job-agent carta <link> [--idioma Spanish]` — carta con RAG sobre `private/experiencia.md` + verificador
