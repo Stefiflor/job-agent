@@ -138,3 +138,7 @@ Python · Claude Agent SDK · pydantic · FastAPI · httpx · Postgres + pgvecto
 - [x] API with streaming + Vue UI
 - [ ] Eval results on a hand-labeled set (harness done, labeling in progress)
 - [ ] Recall@k for the semantic search
+
+## License
+
+[MIT](LICENSE) © 2026 Florencia Gambero
