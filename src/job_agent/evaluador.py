@@ -5,7 +5,9 @@ import json
 from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, query
 from pydantic import ValidationError
 
+from job_agent import config
 from job_agent.config import Criterios
+from job_agent.filtros import aplicar_reglas, clave_oferta
 from job_agent.models import Candidata, CandidataEvaluada, Evaluacion
 
 MAX_CHARS_DESC = 8000  # recorta descripciones largas para no gastar cupo de más
@@ -45,6 +47,7 @@ Descripción:
 def opciones() -> ClaudeAgentOptions:
     return ClaudeAgentOptions(
         system_prompt=SYSTEM_PROMPT,
+        model=config.MODELO_EVALUADOR,
         tools=[],  # sin herramientas: todo lo necesario va en el prompt
         output_format={"type": "json_schema", "schema": Evaluacion.model_json_schema()},
     )
@@ -64,7 +67,7 @@ async def evaluar(c: Candidata, cv: str, criterios: Criterios) -> CandidataEvalu
         print(f"  ⚠ falló: {resultado.subtype if resultado else 'sin resultado'}")
         return None
     try:
-        evaluacion = Evaluacion.model_validate(resultado.structured_output)
+        evaluacion = aplicar_reglas(Evaluacion.model_validate(resultado.structured_output))
     except ValidationError as e:  # el SDK valida el schema, pero no confiamos a ciegas
         print(f"  ⚠ salida inválida: {e.error_count()} errores")
         return None
@@ -73,13 +76,35 @@ async def evaluar(c: Candidata, cv: str, criterios: Criterios) -> CandidataEvalu
         evaluacion=evaluacion,
         costo_usd=resultado.total_cost_usd,
         duracion_ms=resultado.duration_ms,
+        modelo=config.MODELO_EVALUADOR,
     )
+
+
+def sin_evaluar(candidatas: list[Candidata], evaluadas: list[CandidataEvaluada]) -> list[Candidata]:
+    """Candidatas que todavía no se evaluaron, ni con el mismo link ni como duplicado (empresa + título)."""
+    ya = {e.candidata.link for e in evaluadas} | {clave_oferta(e.candidata.titulo, e.candidata.empresa) for e in evaluadas}
+    return [c for c in candidatas if c.link not in ya and clave_oferta(c.titulo, c.empresa) not in ya]
+
+
+def actualizar_vencimientos(evaluadas: list[CandidataEvaluada], candidatas: list[Candidata]) -> int:
+    """Copia la fecha de vencimiento de una búsqueda nueva a las evaluaciones guardadas (mismo link).
+    Así las evaluadas antes de que se guardara el vencimiento también se pueden ocultar al vencer."""
+    vence = {c.link: c.vence for c in candidatas if c.vence}
+    n = 0
+    for i, e in enumerate(evaluadas):
+        v = vence.get(e.candidata.link)
+        if v and v != e.candidata.vence:
+            evaluadas[i] = e.model_copy(update={"candidata": e.candidata.model_copy(update={"vence": v})})
+            n += 1
+    return n
 
 
 def cargar_evaluadas(ruta) -> list[CandidataEvaluada]:
     if not ruta.exists():
         return []
-    return [CandidataEvaluada.model_validate(x) for x in json.loads(ruta.read_text(encoding="utf-8"))]
+    evaluadas = [CandidataEvaluada.model_validate(x) for x in json.loads(ruta.read_text(encoding="utf-8"))]
+    # Las reglas se aplican también al leer: corrigen evaluaciones guardadas antes de que existieran.
+    return [e.model_copy(update={"evaluacion": aplicar_reglas(e.evaluacion)}) for e in evaluadas]
 
 
 def guardar_evaluadas(ruta, evaluadas: list[CandidataEvaluada]) -> None:

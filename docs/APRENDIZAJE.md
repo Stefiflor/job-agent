@@ -341,3 +341,27 @@ Arreglo: si la base tiene 60 fragmentos o menos, se pasan **todos**, y el prompt
 - `evals correr` pasó a ser un generador de eventos: la CLI los imprime y la API los manda por SSE, con progreso en vivo. Es el mismo patrón que el agente: un núcleo y dos interfaces.
 
 *Pregunta de entrevista:* "¿Cómo evitás sesgar tus etiquetas?" → Etiquetado a ciegas, muestra estratificada, orden aleatorio, y la información del modelo fuera de la respuesta de la API, no solo fuera de la vista.
+
+---
+
+## Mejoras después de los evals
+
+Los evals dieron 32% de acuerdo. Mirando caso por caso, el agente era muy consistente (100%) y las diferencias venían de dos lados: criterios distintos sobre requisitos excluyentes, y una falla real del modelo.
+
+**1. Regla de ubicación en código.** El modelo escribía "exige vivir en EMEA" como red flag, ponía `elegible_ubicacion: "no claro"` y aun así decía "aplicar" (Workster: 82 puntos). Ahora `aplicar_reglas()` baja ese caso a "dudoso" y agrega una nota. Se aplica también al **leer** `evaluadas.json`, así las evaluaciones viejas se corrigen sin volver a pagarlas. Sobre tus 58 evaluadas: "aplicar" pasó de 16 a 6. Las otras 10 no se descartan: quedan en dudoso con "confirmá si contratan desde donde vivís".
+*Lección:* cuando el modelo detecta un riesgo pero no lo pesa bien, no hace falta pelear con el prompt: lo que es una regla va en código.
+
+**2. Un modelo por tarea.** Evaluar es leer y clasificar, se hace muchas veces y es lo que más cupo gasta: va con Haiku. Cartas y agente escriben o deciden: Sonnet. Cada evaluación guarda qué modelo la hizo, para poder comparar.
+*Pendiente honesto:* no se midió si Haiku evalúa igual de bien. Con el set de evals ya etiquetado se puede comparar corriendo `JOB_AGENT_MODELO_EVALUADOR=haiku` contra `sonnet`.
+
+**3. Duplicados.** La misma oferta publicada para varios países llega con links distintos (TripleTen aparecía dos veces). Se agrupa por empresa + título normalizados: en `filtrar` (no se evalúa dos veces), al elegir qué evaluar, en el agente y en el listado.
+
+**4. Vencidas.** Himalayas informa `expiryDate`; ahora se guarda como `vence` y el listado oculta las vencidas. Las evaluadas viejas no tenían el dato: cada `buscar` lo completa para las que siguen publicadas. Sin fecha, no se oculta: no se puede afirmar que venció.
+
+**5. Cobertura de todo el año.** El filtro de país aceptaba una oferta si coincidía en *un* país. Para alguien que vive medio año en Argentina y medio en Europa eso no alcanza: de 58 ofertas evaluadas, solo 6 aceptaban trabajar desde los dos lados (o desde cualquier país). Y el modelo no lo detectaba: ComCap y Darwoft estaban en "aplicar" con ubicación "sí", pero aceptaban solo un lado.
+- `criterios.json` tiene `zonasResidencia`: grupos de países. Una oferta tiene **cobertura total** si acepta al menos un país de cada grupo, o cualquier país.
+- Las **parciales** se descartan en `filtrar`, antes de gastar en el LLM. Las ya evaluadas se ocultan en el listado (se calcula al leer). Hay un interruptor "Ver parciales" porque algunas empresas aceptan igual que rotes: hay que preguntar.
+- La empresa puede ser de cualquier país: lo que importa es **desde dónde te deja trabajar**. El texto de `situacion` le explica al evaluador que la candidata es contractor (B2B): "Full Time" no descarta, pero sí exigir vivir en EE.UU. o nómina local sin opción contractor.
+- Como el filtro es gratis y deja pasar pocas, `buscar` trae 4 páginas por rol en vez de 2.
+
+*Lección:* el modelo leyó "Remote (Argentina)" y concluyó "elegible". La regla de negocio ("todo el año") era más fina de lo que el prompt expresaba. Cuando una condición se puede calcular con los datos estructurados, se calcula; no se le pide al modelo que la deduzca.

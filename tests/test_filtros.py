@@ -2,14 +2,20 @@
 
 from job_agent.config import Criterios
 from job_agent.filtros import (
+    aplicar_reglas,
+    clave_oferta,
+    cobertura,
     filtrar,
     limpiar_html,
+    vencida,
     paises_validos,
     salario_usd_mes,
     seniority_excluida,
     zona_ok,
 )
-from job_agent.models import Job
+from datetime import date
+
+from job_agent.models import Evaluacion, Job
 
 CRITERIOS = Criterios.model_validate(
     {
@@ -116,10 +122,83 @@ def test_filtrar_cuenta_motivos_y_ordena_por_salario():
         job(guid="b", description="<p>Just one more step.</p>"),
         job(guid="c", minSalary=1000, maxSalary=2000, salaryPeriod="monthly", currency="USD"),
         job(guid="d", minSalary=3000, maxSalary=4000, salaryPeriod="monthly", currency="USD"),
-        job(guid="e"),
+        job(guid="e", title="LLM Engineer"),
     ]
     candidatas, descartes = filtrar(jobs, CRITERIOS, ahora=0)
     assert descartes["pais"] == 1
     assert descartes["desc_vacia"] == 1
     assert descartes["salario_bajo"] == 1
     assert [c.salario_usd_mes.max if c.salario_usd_mes else None for c in candidatas] == [4000, None]
+
+
+# --- duplicados, vencimiento y reglas sobre el LLM -----------------------------
+
+def test_misma_oferta_en_varios_paises_se_evalua_una_vez():
+    jobs = [
+        job(guid="a", applicationLink="https://x/pt", title="Applied AI Course Author", companyName="TripleTen"),
+        job(guid="b", applicationLink="https://x/es", title="Applied AI  course author!", companyName="tripleten",
+            minSalary=3000, maxSalary=4000, salaryPeriod="monthly", currency="USD"),
+        job(guid="c", applicationLink="https://x/3", title="Applied AI Engineer", companyName="TripleTen"),
+    ]
+    candidatas, descartes = filtrar(jobs, CRITERIOS, ahora=0)
+    assert descartes["duplicada"] == 1
+    assert [c.link for c in candidatas] == ["https://x/es", "https://x/3"]  # queda la de salario informado
+
+
+def test_clave_ignora_mayusculas_y_puntuacion():
+    assert clave_oferta("Sr. AI Engineer (LLM)", "Acme, Inc") == clave_oferta("sr ai engineer llm", "ACME INC")
+    assert clave_oferta("AI Engineer", "Acme") != clave_oferta("AI Engineer II", "Acme")
+
+
+def test_vencimiento_se_guarda_y_sin_dato_no_vence():
+    c = filtrar([job(expiryDate=1_800_000_000)], CRITERIOS, ahora=0)[0][0]
+    assert c.vence == "2027-01-15"
+    assert vencida(c, date(2027, 1, 16)) and not vencida(c, date(2027, 1, 15))
+    assert not vencida(c.model_copy(update={"vence": None}), date(2099, 1, 1))
+
+
+def _ev(veredicto: str, ubicacion: str) -> Evaluacion:
+    return Evaluacion(encaje=82, veredicto=veredicto, tipo_puesto="ingeniería AI/LLM", elegible_ubicacion=ubicacion,
+                      salario_detectado="", cumple=[], falta=[], red_flags=["Agencia"], resumen="")
+
+
+def test_aplicar_con_ubicacion_dudosa_baja_a_dudoso():
+    r = aplicar_reglas(_ev("aplicar", "no claro"))
+    assert (r.veredicto, r.encaje) == ("dudoso", 82)  # el encaje no se toca
+    assert r.red_flags[0].startswith("Bajado a 'dudoso'") and r.red_flags[1] == "Agencia"
+    assert aplicar_reglas(r) == r  # aplicarla dos veces no duplica la nota
+
+
+def test_reglas_no_tocan_lo_demas():
+    for v, u in [("aplicar", "sí"), ("dudoso", "no"), ("descartar", "no claro")]:
+        assert aplicar_reglas(_ev(v, u)).veredicto == v
+
+
+# --- cobertura: poder trabajar desde todos los lugares donde vivís -------------
+
+ROTATIVA = CRITERIOS.model_copy(update={
+    "paises_residencia": ["Argentina", "Spain", "Portugal"],
+    "zonas_residencia": [["Argentina"], ["Spain", "Portugal"]],
+})
+
+
+def test_cobertura_total_parcial():
+    assert cobertura(["cualquiera"], ROTATIVA) == "total"
+    assert cobertura(["Argentina", "Spain"], ROTATIVA) == "total"
+    assert cobertura(["Spain", "Portugal"], ROTATIVA) == "parcial"
+    assert cobertura(["Argentina"], ROTATIVA) == "parcial"
+    assert cobertura(["Spain"], CRITERIOS) == "total"  # sin zonas configuradas: como antes
+
+
+def test_filtrar_descarta_parciales_salvo_que_se_pidan():
+    jobs = [
+        job(guid="a", title="A", locationRestrictions=["Spain", "Germany"]),
+        job(guid="b", title="B", locationRestrictions=["Argentina", "Brazil", "Portugal"]),
+        job(guid="c", title="C"),  # sin restricción = cualquier país
+        job(guid="d", title="D", locationRestrictions=["United States"]),
+    ]
+    candidatas, descartes = filtrar(jobs, ROTATIVA, ahora=0)
+    assert sorted(c.titulo for c in candidatas) == ["B", "C"]
+    assert descartes["cobertura_parcial"] == 1 and descartes["pais"] == 1
+    con_parciales = ROTATIVA.model_copy(update={"incluir_parciales": True})
+    assert len(filtrar(jobs, con_parciales, ahora=0)[0]) == 3

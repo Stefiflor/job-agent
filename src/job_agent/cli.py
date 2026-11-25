@@ -7,7 +7,7 @@ import time
 
 from job_agent import agente, config, evals
 from job_agent.sources import himalayas
-from job_agent.evaluador import cargar_evaluadas, evaluar, guardar_evaluadas
+from job_agent.evaluador import actualizar_vencimientos, cargar_evaluadas, evaluar, guardar_evaluadas, sin_evaluar
 from job_agent.filtros import filtrar
 from job_agent.models import Candidata
 from job_agent.sources.himalayas import buscar_roles
@@ -22,6 +22,10 @@ async def cmd_buscar(paginas: int) -> None:
         json.dumps([c.model_dump(mode="json") for c in candidatas], ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    evaluadas = cargar_evaluadas(config.EVALUADAS)
+    if n := actualizar_vencimientos(evaluadas, candidatas):
+        guardar_evaluadas(config.EVALUADAS, evaluadas)
+        print(f"Fecha de vencimiento actualizada en {n} ofertas ya evaluadas")
     print(f"\nÚnicas encontradas: {len(jobs)}")
     print(f"Descartadas: {descartes}")
     print(f"Candidatas: {len(candidatas)} → {config.CANDIDATAS.relative_to(config.RAIZ)}\n")
@@ -43,9 +47,8 @@ async def cmd_evaluar(limite: int, reevaluar: bool) -> None:
     ]
 
     evaluadas = [] if reevaluar else cargar_evaluadas(config.EVALUADAS)
-    ya = {e.candidata.link for e in evaluadas}
-    pendientes = [c for c in candidatas if c.link not in ya][:limite]
-    print(f"{len(ya)} ya evaluadas (se saltean) · {len(pendientes)} por evaluar\n")
+    pendientes = sin_evaluar(candidatas, evaluadas)[:limite]
+    print(f"{len(evaluadas)} ya evaluadas (se saltean) · {len(pendientes)} por evaluar · modelo: {config.MODELO_EVALUADOR}\n")
 
     costo_total = 0.0
     for i, c in enumerate(pendientes, 1):
@@ -141,7 +144,7 @@ def main() -> None:
     sub = parser.add_subparsers(dest="comando", required=True)
 
     p_buscar = sub.add_parser("buscar", help="Busca en Himalayas y filtra")
-    p_buscar.add_argument("--paginas", type=int, default=2)
+    p_buscar.add_argument("--paginas", type=int, default=4)
 
     p_eval = sub.add_parser("evaluar", help="Evalúa las candidatas con Claude")
     p_eval.add_argument("--limite", type=int, default=3)

@@ -5,10 +5,10 @@ Son funciones puras (sin red ni disco) para poder testearlas.
 
 import html
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from job_agent.config import Criterios
-from job_agent.models import Candidata, Job, RangoSalario
+from job_agent.models import Candidata, Evaluacion, Job, RangoSalario
 
 HORAS_MES = 160  # jornada completa; las ofertas por hora se marcan aparte
 MIN_CHARS_DESC = 500  # menos que esto suele ser una descripción de plantilla
@@ -44,6 +44,14 @@ def paises_validos(job: Job, criterios: Criterios) -> list[str] | None:
     return ok or None
 
 
+def cobertura(paises: list[str], criterios: Criterios) -> str:
+    """'total' si podés trabajar desde todos los lugares donde vivís durante el año; si no, 'parcial'.
+    Sin zonas configuradas, todo es 'total' (alcanza con coincidir en un país)."""
+    if "cualquiera" in paises or not criterios.zonas_residencia:
+        return "total"
+    return "total" if all(set(paises) & set(zona) for zona in criterios.zonas_residencia) else "parcial"
+
+
 def seniority_excluida(job: Job, criterios: Criterios) -> bool:
     if any(s in criterios.excluir_seniority for s in job.seniority):
         return True
@@ -57,12 +65,33 @@ def limpiar_html(texto: str) -> str:
     return re.sub(r"\s+", " ", texto).strip()
 
 
+def _fecha(ts: int | None) -> str | None:
+    return datetime.fromtimestamp(ts, tz=timezone.utc).date().isoformat() if ts else None
+
+
+def clave_oferta(titulo: str, empresa: str) -> str:
+    """Misma empresa + mismo título = misma oferta, aunque se publique en varios países con links distintos."""
+    norm = lambda t: re.sub(r"[^a-z0-9]+", " ", t.lower()).strip()  # noqa: E731
+    return f"{norm(empresa)}|{norm(titulo)}"
+
+
+def vencida(c: Candidata, hoy: date) -> bool:
+    """Solo si la fuente informó la fecha: sin dato no se puede afirmar que venció."""
+    return c.vence is not None and date.fromisoformat(c.vence) < hoy
+
+
+def aplicar_reglas(ev: Evaluacion) -> Evaluacion:
+    """Reglas duras sobre el veredicto del LLM. Hoy, una: si no está claro que puedas trabajar
+    desde donde vivís, no es 'aplicar' (los evals mostraron que el modelo lo marca como riesgo
+    y aun así recomienda aplicar). El puntaje de encaje no se toca: mide otra cosa."""
+    if ev.veredicto == "aplicar" and ev.elegible_ubicacion != "sí":
+        nota = "Bajado a 'dudoso': confirmá si contratan desde donde vivís antes de aplicar."
+        return ev.model_copy(update={"veredicto": "dudoso", "red_flags": [nota, *ev.red_flags]})
+    return ev
+
+
 def a_candidata(job: Job, paises: list[str], salario: RangoSalario | None, texto: str) -> Candidata:
-    publicada = (
-        datetime.fromtimestamp(job.pub_date, tz=timezone.utc).date().isoformat()
-        if job.pub_date
-        else None
-    )
+    publicada = _fecha(job.pub_date)
     return Candidata(
         titulo=job.title,
         empresa=job.company_name,
@@ -79,6 +108,7 @@ def a_candidata(job: Job, paises: list[str], salario: RangoSalario | None, texto
         publicada=publicada,
         link=job.application_link,
         descripcion=texto,
+        vence=_fecha(job.expiry_date),
     )
 
 
@@ -88,8 +118,11 @@ def motivo_descarte(job: Job, criterios: Criterios, ahora: float) -> str | None:
         return "vencida"
     if not zona_ok(job, criterios):
         return "zona_horaria"
-    if paises_validos(job, criterios) is None:
+    paises = paises_validos(job, criterios)
+    if paises is None:
         return "pais"
+    if not criterios.incluir_parciales and cobertura(paises, criterios) == "parcial":
+        return "cobertura_parcial"
     if seniority_excluida(job, criterios):
         return "seniority"
     salario = salario_usd_mes(job)
@@ -109,8 +142,9 @@ def filtrar(
 ) -> tuple[list[Candidata], dict[str, int]]:
     """Aplica los filtros en orden y cuenta por qué se descartó cada oferta."""
     descartes = dict.fromkeys(
-        ["vencida", "zona_horaria", "pais", "seniority", "salario_bajo", "desc_vacia"], 0
+        ["vencida", "zona_horaria", "pais", "cobertura_parcial", "seniority", "salario_bajo", "desc_vacia"], 0
     )
+    descartes["duplicada"] = 0
     candidatas: list[Candidata] = []
     for job in jobs:
         motivo = motivo_descarte(job, criterios, ahora)
@@ -121,4 +155,13 @@ def filtrar(
 
     # Salario más alto primero; las sin dato al final.
     candidatas.sort(key=lambda c: c.salario_usd_mes.max if c.salario_usd_mes else -1, reverse=True)
-    return candidatas, descartes
+    # Una sola por empresa+título: la misma oferta publicada en varios países se evaluaría
+    # (y se pagaría) varias veces. Se queda la primera, que es la de mejor salario.
+    unicas: dict[str, Candidata] = {}
+    for c in candidatas:
+        k = clave_oferta(c.titulo, c.empresa)
+        if k in unicas:
+            descartes["duplicada"] += 1
+        else:
+            unicas[k] = c
+    return list(unicas.values()), descartes

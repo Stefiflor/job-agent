@@ -17,6 +17,7 @@ export interface Oferta {
   veredicto: Veredicto;
   tipo_puesto: string;
   elegible_ubicacion: string;
+  cobertura: "total" | "parcial";
   resumen: string;
   red_flags: string[];
 }
@@ -116,8 +117,8 @@ async function pedir<T>(ruta: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   resumen: () => pedir<Resumen>("/resumen"),
-  ofertas: (p: { veredicto?: Veredicto; q?: string } = {}) => {
-    const qs = new URLSearchParams(Object.entries(p).filter(([, v]) => v) as [string, string][]);
+  ofertas: (p: { veredicto?: Veredicto; q?: string; incluir_parciales?: boolean } = {}) => {
+    const qs = new URLSearchParams(Object.entries(p).filter(([, v]) => v).map(([k, v]) => [k, String(v)]));
     return pedir<Oferta[]>(`/ofertas?${qs}`);
   },
   oferta: (id: string) => pedir<DetalleOferta>(`/ofertas/${id}`),

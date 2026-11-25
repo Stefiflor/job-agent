@@ -29,7 +29,7 @@ from pydantic import BaseModel
 from job_agent import config
 from job_agent.config import Criterios
 from job_agent.evaluador import cargar_evaluadas, evaluar, guardar_evaluadas
-from job_agent.filtros import filtrar
+from job_agent.filtros import clave_oferta, filtrar
 from job_agent.models import Candidata, CandidataEvaluada
 from job_agent.sources import himalayas
 
@@ -73,7 +73,9 @@ class Sesion:
         return self.por_link[c.link]
 
     def evaluacion_previa(self, c: Candidata) -> CandidataEvaluada | None:
-        return next((e for e in self.evaluadas if e.candidata.link == c.link), None)
+        k = clave_oferta(c.titulo, c.empresa)  # la misma oferta puede venir con otro link
+        return next((e for e in self.evaluadas
+                     if e.candidata.link == c.link or clave_oferta(e.candidata.titulo, e.candidata.empresa) == k), None)
 
 
 def _texto(t: str, error: bool = False) -> dict[str, Any]:
@@ -278,6 +280,7 @@ async def _log_herramienta(input_data, tool_use_id, context):
 def opciones_agente(herramientas: list, max_turnos: int) -> ClaudeAgentOptions:
     return ClaudeAgentOptions(
         system_prompt=SYSTEM_PROMPT,
+        model=config.MODELO_AGENTE,
         tools=[],  # sin herramientas de Claude Code (Bash, Read...): solo las nuestras
         mcp_servers={SERVIDOR: create_sdk_mcp_server(SERVIDOR, tools=herramientas)},
         allowed_tools=nombres_herramientas(herramientas),

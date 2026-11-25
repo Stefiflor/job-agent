@@ -33,3 +33,8 @@ Agente que busca ofertas remotas (Himalayas API) y las evalúa contra un CV con 
 - Lo que se puede decidir con código va en `filtros.py`; el LLM solo para criterio (encaje, leer texto libre).
 - Una llamada al modelo por oferta. `tools=[]` en el evaluador.
 - Nombres de dominio en español, como el resto del código.
+
+## Modelos y reglas
+- Modelo por tarea en `config.py` (evaluador: haiku; carta y agente: sonnet). Se cambian con `JOB_AGENT_MODELO_EVALUADOR`, `JOB_AGENT_MODELO_CARTA`, `JOB_AGENT_MODELO_AGENTE`.
+- `filtros.aplicar_reglas` corre después de cada evaluación y al cargar `evaluadas.json`: reglas duras sobre el veredicto del LLM. No mover esa lógica al prompt.
+- Duplicados: `filtros.clave_oferta` (empresa + título normalizados). Vencidas: `Candidata.vence`, se completa en cada `buscar`.

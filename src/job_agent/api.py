@@ -10,6 +10,7 @@ import asyncio
 import hashlib
 import json
 import time
+from datetime import date
 from collections import Counter
 from datetime import date
 from pathlib import Path
@@ -21,8 +22,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from job_agent import agente, carta, config, evals
-from job_agent.evaluador import cargar_evaluadas, evaluar, guardar_evaluadas
-from job_agent.filtros import filtrar
+from job_agent.evaluador import actualizar_vencimientos, cargar_evaluadas, evaluar, guardar_evaluadas, sin_evaluar
+from job_agent.filtros import clave_oferta, cobertura, filtrar, vencida
+from job_agent.config import Criterios
 from job_agent.models import Candidata, CandidataEvaluada
 from job_agent.sources.himalayas import buscar_roles
 
@@ -58,6 +60,32 @@ def _evaluadas() -> list[CandidataEvaluada]:
     return cargar_evaluadas(config.EVALUADAS)
 
 
+def _criterios() -> Criterios | None:
+    return config.cargar_criterios(config.CRITERIOS) if config.CRITERIOS.exists() else None
+
+
+def _cobertura(c: Candidata, criterios: Criterios | None) -> str:
+    return cobertura(c.paises_validos, criterios) if criterios else "total"
+
+
+def _visibles(evaluadas: list[CandidataEvaluada], incluir_vencidas: bool = False,
+              incluir_parciales: bool = False) -> list[CandidataEvaluada]:
+    """Lo que se muestra: una por empresa+título (la de mayor encaje) y, salvo pedido, sin vencidas
+    ni ofertas que solo cubren parte del año (se calcula al leer: vale para las evaluadas viejas)."""
+    hoy = date.today()
+    criterios = _criterios()
+    mejores: dict[str, CandidataEvaluada] = {}
+    for e in evaluadas:
+        if not incluir_vencidas and vencida(e.candidata, hoy):
+            continue
+        if not incluir_parciales and _cobertura(e.candidata, criterios) == "parcial":
+            continue
+        k = clave_oferta(e.candidata.titulo, e.candidata.empresa)
+        if k not in mejores or e.evaluacion.encaje > mejores[k].evaluacion.encaje:
+            mejores[k] = e
+    return list(mejores.values())
+
+
 def _buscar_por_id(oid: str) -> tuple[Candidata, CandidataEvaluada | None]:
     for e in _evaluadas():
         if oferta_id(e.candidata.link) == oid:
@@ -68,7 +96,7 @@ def _buscar_por_id(oid: str) -> tuple[Candidata, CandidataEvaluada | None]:
     raise HTTPException(404, "Oferta no encontrada")
 
 
-def _resumen_oferta(e: CandidataEvaluada) -> dict:
+def _resumen_oferta(e: CandidataEvaluada, criterios: Criterios | None = None) -> dict:
     c, ev = e.candidata, e.evaluacion
     return {
         "id": oferta_id(c.link),
@@ -79,6 +107,8 @@ def _resumen_oferta(e: CandidataEvaluada) -> dict:
         "por_hora": c.por_hora,
         "paises": c.paises_validos,
         "publicada": c.publicada,
+        "vence": c.vence,
+        "cobertura": _cobertura(c, criterios),
         "encaje": ev.encaje,
         "veredicto": ev.veredicto,
         "tipo_puesto": ev.tipo_puesto,
@@ -112,7 +142,7 @@ def salud() -> dict:
 
 @app.get("/api/resumen")
 def resumen() -> dict:
-    ev = _evaluadas()
+    ev = _visibles(_evaluadas())
     tracker = _leer_json(TRACKER, [])
     return {
         "candidatas": len(_leer_json(config.CANDIDATAS, [])),
@@ -128,8 +158,11 @@ def ofertas(
     veredicto: Literal["aplicar", "dudoso", "descartar"] | None = None,
     min_encaje: int = Query(0, ge=0, le=100),
     q: str | None = None,
+    incluir_vencidas: bool = False,
+    incluir_parciales: bool = False,
 ) -> list[dict]:
-    res = [_resumen_oferta(e) for e in _evaluadas()]
+    criterios = _criterios()
+    res = [_resumen_oferta(e, criterios) for e in _visibles(_evaluadas(), incluir_vencidas, incluir_parciales)]
     if veredicto:
         res = [r for r in res if r["veredicto"] == veredicto]
     if q:
@@ -154,12 +187,15 @@ def oferta(oid: str) -> dict:
 # --- Acciones largas: streaming ----------------------------------------------------
 
 @app.post("/api/buscar")
-async def api_buscar(paginas: int = Query(2, ge=1, le=5)) -> dict:
+async def api_buscar(paginas: int = Query(4, ge=1, le=5)) -> dict:  # filtrar es gratis: conviene traer más
     criterios = config.cargar_criterios()
     jobs = await buscar_roles(criterios.roles, paginas)
     candidatas, descartes = filtrar(jobs, criterios, ahora=time.time())
     async with _lock_archivos:
         _escribir_json(config.CANDIDATAS, [c.model_dump(mode="json") for c in candidatas])
+        evaluadas = _evaluadas()
+        if actualizar_vencimientos(evaluadas, candidatas):
+            guardar_evaluadas(config.EVALUADAS, evaluadas)
     return {"encontradas": len(jobs), "candidatas": len(candidatas), "descartes": descartes}
 
 
@@ -168,9 +204,8 @@ async def _eventos_evaluar(limite: int) -> AsyncIterator[dict]:
     cv = config.CV.read_text(encoding="utf-8")
     candidatas = [Candidata.model_validate(x) for x in _leer_json(config.CANDIDATAS, [])]
     evaluadas = _evaluadas()
-    ya = {e.candidata.link for e in evaluadas}
-    pendientes = [c for c in candidatas if c.link not in ya][:limite]
-    yield {"tipo": "inicio", "pendientes": len(pendientes), "ya_evaluadas": len(ya)}
+    pendientes = sin_evaluar(candidatas, evaluadas)[:limite]
+    yield {"tipo": "inicio", "pendientes": len(pendientes), "ya_evaluadas": len(evaluadas)}
     costo = 0.0
     for i, c in enumerate(pendientes, 1):
         r = await evaluar(c, cv, criterios)
@@ -181,7 +216,7 @@ async def _eventos_evaluar(limite: int) -> AsyncIterator[dict]:
         async with _lock_archivos:
             guardar_evaluadas(config.EVALUADAS, evaluadas)
         costo += r.costo_usd or 0
-        yield {"tipo": "evaluada", "n": i, "total": len(pendientes), "oferta": _resumen_oferta(r)}
+        yield {"tipo": "evaluada", "n": i, "total": len(pendientes), "oferta": _resumen_oferta(r, criterios)}
     yield {"tipo": "fin", "costo_usd": round(costo, 3)}
 
 

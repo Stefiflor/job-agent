@@ -172,3 +172,55 @@ def test_correr_evals_por_stream(con_evals, tmp_path, monkeypatch):
     assert [e["tipo"] for e in eventos] == ["progreso", "progreso", "resultado", "fin"]
     assert eventos[2]["metricas"]["acuerdo_exacto"] == 1
     assert con_evals.get("/api/evals").json()["metricas"]["ofertas"] == 1
+
+
+# --- Listado limpio: sin vencidas ni duplicadas, con la regla de ubicación -------
+
+def _guardar(evs):
+    config.EVALUADAS.write_text(json.dumps([e.model_dump(mode="json") for e in evs]))
+
+
+def test_ofertas_oculta_vencidas_salvo_pedido(cliente):
+    a, b = evaluada("https://x/a"), evaluada("https://x/b")
+    a.candidata.vence, b.candidata.vence = "2020-01-01", "2999-01-01"
+    _guardar([a, b])
+    assert [o["link"] for o in cliente.get("/api/ofertas").json()] == ["https://x/b"]
+    assert len(cliente.get("/api/ofertas", params={"incluir_vencidas": True}).json()) == 2
+    assert cliente.get("/api/resumen").json()["evaluadas"] == 1
+
+
+def test_ofertas_muestra_una_por_empresa_y_titulo(cliente):
+    a, b = evaluada("https://x/a", encaje=40), evaluada("https://x/b", encaje=70)
+    b.candidata.titulo = a.candidata.titulo  # misma oferta publicada con otro link
+    _guardar([a, b])
+    assert [(o["link"], o["encaje"]) for o in cliente.get("/api/ofertas").json()] == [("https://x/b", 70)]
+
+
+def test_evaluaciones_viejas_reciben_la_regla_de_ubicacion(cliente):
+    a = evaluada("https://x/a")
+    a.evaluacion.elegible_ubicacion = "no claro"  # guardada antes de que existiera la regla
+    _guardar([a])
+    o = cliente.get("/api/ofertas").json()[0]
+    assert o["veredicto"] == "dudoso" and o["red_flags"][0].startswith("Bajado")
+
+
+def test_buscar_completa_el_vencimiento_de_las_evaluadas(cliente, monkeypatch):
+    nueva = evaluada("https://x/a").candidata.model_copy(update={"vence": "2999-12-31"})
+    async def buscar_falso(roles, paginas): return []
+    monkeypatch.setattr(api, "buscar_roles", buscar_falso)
+    monkeypatch.setattr(api, "filtrar", lambda jobs, c, ahora: ([nueva], {}))
+    monkeypatch.setattr(config, "cargar_criterios", lambda: CRITERIOS)
+    cliente.post("/api/buscar")
+    assert api._evaluadas()[0].candidata.vence == "2999-12-31"
+
+
+def test_ofertas_parciales_ocultas_por_defecto(cliente, tmp_path, monkeypatch):
+    a, b = evaluada("https://x/a"), evaluada("https://x/b")
+    a.candidata.paises_validos, b.candidata.paises_validos = ["Argentina", "Spain"], ["Spain"]
+    _guardar([a, b])
+    monkeypatch.setattr(config, "CRITERIOS", tmp_path / "criterios.json")
+    config.CRITERIOS.write_text(json.dumps(CRITERIOS.model_dump(by_alias=True) | {
+        "paisesResidencia": ["Argentina", "Spain"], "zonasResidencia": [["Argentina"], ["Spain"]]}))
+    assert [(o["link"], o["cobertura"]) for o in cliente.get("/api/ofertas").json()] == [("https://x/a", "total")]
+    todas = cliente.get("/api/ofertas", params={"incluir_parciales": True}).json()
+    assert {o["cobertura"] for o in todas} == {"total", "parcial"}

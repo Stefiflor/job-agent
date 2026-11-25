@@ -65,7 +65,7 @@ def test_buscar_dos_veces_mantiene_el_mismo_id(sesion):
 
 def test_presupuesto_de_evaluaciones(sesion):
     correr(herramienta(sesion, "buscar_ofertas")({"consulta": "ai", "paginas": 1}))
-    sesion.ofertas["o2"] = sesion.ofertas["o1"].model_copy(update={"link": "https://x/otra"})
+    sesion.ofertas["o2"] = sesion.ofertas["o1"].model_copy(update={"link": "https://x/otra", "titulo": "Otra oferta"})
     evaluar = herramienta(sesion, "evaluar_oferta")
     assert "quedan 0" in texto(correr(evaluar({"id": "o1"})))
     r = correr(evaluar({"id": "o2"}))

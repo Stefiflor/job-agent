@@ -47,6 +47,10 @@ An AI agent that searches remote job postings, filters them against hard criteri
 
 - **Code for what is binary, the LLM for judgment.** Salary, timezone and country are filters with tests. The model only reads free text and decides fit. Cheaper, reproducible, and the LLM's job is narrow enough to evaluate.
 - **Guardrails live in the tools.** The agent's prompt asks it to be frugal, but `evaluar_oferta` refuses once the budget is spent, and `guardar_en_tracker` only accepts postings with an `apply` verdict. Tools are the agent's security boundary.
+- **Hard rules on top of the LLM.** If the model says *apply* but couldn't confirm the candidate can be hired from where she lives, the verdict is capped at *maybe* in code. The evals showed the model flagging that risk and recommending to apply anyway. Rules also run when loading old evaluations, so they apply retroactively at no cost.
+- **Location coverage, not just a country match.** For someone who splits the year between places, a posting only qualifies if it accepts at least one country from *each* place (or worldwide). Postings covering only part of the year are filtered before the LLM (free) and can be shown with a toggle.
+- **Right-sized models.** Evaluation (read and classify, run many times) uses Haiku; letters and the agent use Sonnet. Configurable per task with `JOB_AGENT_MODELO_*` env vars.
+- **Don't pay twice for the same posting.** The same job published for several countries has different links; it's deduplicated by normalized company + title before evaluation. Expired postings are hidden.
 - **Structured output, validated twice.** The same pydantic model generates the schema the SDK enforces and validates the response again on our side.
 - **Grounded generation.** Cheap checks first (do the cited fragment ids exist?), then a second model with a different prompt and no incentive to "sound convincing". Max two attempts; otherwise the letter is flagged for human review.
 - **Small knowledge base → no retrieval.** With ≤60 fragments, passing all of them beat top-k retrieval, which was dropping the strongest achievements because they shared fewer words with the posting.
@@ -82,6 +86,8 @@ Personal data lives in `private/`, which is git-ignored. Create:
     "roles": ["AI Engineer", "LLM Engineer"],
     "zonaHoraria": { "minUTC": -3, "maxUTC": 2, "toleranciaHoras": 2 },
     "paisesResidencia": ["Argentina", "Spain"],
+    "zonasResidencia": [["Argentina"], ["Spain"]],
+    "incluirParciales": false,
     "excluirSeniority": ["Intern"],
     "salarioMinimoUSDMes": 2500,
     "situacion": "Free text the evaluator should know (residency, availability...)"

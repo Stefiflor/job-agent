@@ -30,6 +30,11 @@
           </select>
         </div>
 
+        <label class="check parciales">
+          <input v-model="parciales" type="checkbox" />
+          <span>Ver parciales<small class="texto-3">Solo aceptan Europa o solo Argentina: preguntá antes de postular.</small></span>
+        </label>
+
         <div class="grupo">
           <label class="etiqueta" for="salario">Salario</label>
           <select id="salario" v-model="salario">
@@ -75,6 +80,7 @@
             <div class="nombres">
               <strong>{{ o.titulo }}</strong>
               <span class="texto-2">{{ o.empresa }} · {{ ubicacionCorta(o.paises) }}</span>
+              <span v-if="o.cobertura === 'parcial'" class="chip naranja chico">Parcial</span>
             </div>
             <ScorePill :encaje="o.encaje" />
           </li>
@@ -87,6 +93,7 @@
         <div class="chips">
           <span class="chip verde">Remoto</span>
           <span class="chip"><Globe aria-hidden="true" />{{ ubicacionCorta(sel.paises) }}</span>
+          <span v-if="sel.cobertura === 'parcial'" class="chip naranja"><TriangleAlert aria-hidden="true" />No cubre todo el año</span>
           <span v-if="sel.red_flags.length" class="chip rojo"><TriangleAlert aria-hidden="true" />{{ sel.red_flags.length }} {{ sel.red_flags.length === 1 ? "alerta" : "alertas" }}</span>
         </div>
         <div class="encaje">
@@ -127,6 +134,8 @@ const error = ref("");
 const filtro = ref<Veredicto | undefined>(undefined);
 const minimo = ref(0);
 const tiposElegidos = ref<string[]>([]);
+const parciales = ref(false);
+watch(parciales, () => cargar());
 const ubicacion = ref("");
 const salario = ref("");
 const orden = ref<"encaje" | "salario" | "fecha">("encaje");
@@ -164,7 +173,7 @@ const visibles = computed(() => {
 const sel = computed(() => visibles.value.find((o) => o.id === selId.value) ?? visibles.value[0] ?? null);
 watch(visibles, (v) => { if (v.length && !v.some((o) => o.id === selId.value)) selId.value = v[0].id; });
 
-function limpiar() { minimo.value = 0; tiposElegidos.value = []; ubicacion.value = ""; salario.value = ""; filtro.value = undefined; }
+function limpiar() { minimo.value = 0; tiposElegidos.value = []; parciales.value = false; ubicacion.value = ""; salario.value = ""; filtro.value = undefined; }
 
 async function guardar(o: Oferta) {
   try { await api.agregarAlTracker(o.id, o.resumen); guardadas.value = new Set([...guardadas.value, o.id]); }
@@ -173,7 +182,7 @@ async function guardar(o: Oferta) {
 
 async function cargar() {
   try {
-    const [l, t] = await Promise.all([api.ofertas(), api.tracker()]);
+    const [l, t] = await Promise.all([api.ofertas({ incluir_parciales: parciales.value }), api.tracker()]);
     ofertas.value = l; guardadas.value = new Set(t.map((x) => x.id));
   } catch (e) { error.value = `No se pudo conectar con la API (${(e as Error).message}). Levantala con "uv run job-agent api".`; }
   finally { cargando.value = false; }
@@ -252,6 +261,10 @@ onMounted(cargar);
 .dos { display: grid; grid-template-columns: auto 1fr; gap: .5rem; }
 @media (max-width: 1180px) { .grilla { grid-template-columns: 220px minmax(0, 1fr); } .preview { grid-column: 1 / -1; position: static; } }
 @media (max-width: 760px) { .grilla { grid-template-columns: 1fr; } .filtros { position: static; } .filtros.cerrado > :not(.fila-tit) { display: none; } .plegar { display: inline-flex !important; } .solo-escritorio { display: none; } }
+.parciales { align-items: flex-start; }
+.parciales span { display: flex; flex-direction: column; gap: .1rem; }
+.parciales small { font-size: .78rem; font-weight: 500; line-height: 1.35; }
+.chip.chico { font-size: .72rem; padding: .05rem .45rem; align-self: flex-start; margin-top: .15rem; }
 .plegar { display: none; align-items: center; gap: .4rem; background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; }
 .plegar svg { width: 1.1rem; height: 1.1rem; transition: transform .2s; }
 .plegar[aria-expanded="true"] svg { transform: rotate(180deg); }

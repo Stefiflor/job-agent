@@ -46,6 +46,7 @@ class Candidata(BaseModel):
     publicada: str | None
     link: str
     descripcion: str
+    vence: str | None = None  # fecha ISO de vencimiento del aviso, si la fuente la informa
 
 
 class Evaluacion(BaseModel):
@@ -72,3 +73,4 @@ class CandidataEvaluada(BaseModel):
     evaluacion: Evaluacion
     costo_usd: float | None = None
     duracion_ms: int | None = None
+    modelo: str | None = None

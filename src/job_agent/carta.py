@@ -132,6 +132,7 @@ async def _estructurado(prompt: str, system: str, modelo: type[BaseModel]) -> tu
         prompt=prompt,
         options=ClaudeAgentOptions(
             system_prompt=system,
+            model=config.MODELO_CARTA,
             tools=[],
             output_format={"type": "json_schema", "schema": modelo.model_json_schema()},
         ),
